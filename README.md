@@ -2,8 +2,6 @@
 
 AI-driven clinical data service that assembles cited prior-authorization context from a FHIR feed. Every condition, medication, and allergy in the response links back to its FHIR resource ID — a reviewer can verify any line against the source record directly.
 
-Built for the Autonomize FDE technical assignment.
-
 ---
 
 ## Architecture
@@ -23,20 +21,27 @@ Data flow — end to end
 
   main.py (FastAPI :8000)
        │  on GET /fhir/Patient/{id}?model=llama3.2:3b
-       ├─► query HAPI for Condition, MedicationRequest, AllergyIntolerance
+       ├─► paginate HAPI for Condition, MedicationRequest, AllergyIntolerance (_count=1000, follow next links)
        ├─► split medications into active vs historical
        ├─► call ai_summary.generate_summary()
        │         └─► build prompt via llm_param.ini template
+       │              (historical meds collapsed by drug name before prompt is built)
        │         └─► POST to Ollama :11434  ──► LLM generates summary
-       └─► return full packet: clinical data + AI summary
+       ├─► return full packet: clinical data + AI summary (all source refs preserved)
+       └─► write eval artifacts on every request:
+               json_out/ai_summary.json         (full response payload)
+               json_out/ai_summary_metrics.json (Ollama performance metrics)
+               csv_out/ai_summary_metrics.csv   (appended row — builds comparison table across models)
+
+  eval.py (optional CLI — terminal-based model comparison)
+       └─► calls GET /fhir/Patient/{id}?model={model} on the running server
+           no pipeline logic of its own — artifacts written by the server
 ```
 
-Two processes must stay running continuously in the background:
+Two processes must stay running:
 
 - **Docker (HAPI FHIR)** — the FHIR data store, launched by `setup.sh`
-- **main.py** — the FastAPI server and the ingestion loop, run together
-
-`ai_summary.py` is a library module imported by `main.py` — it is not run separately.
+- **main.py** — the FastAPI server and ingestion loop, run together
 
 ---
 
@@ -63,7 +68,7 @@ sh setup.sh
 
 This does three things in sequence:
 
-1. Pulls `llama3.2:3b`, `qwen3:4b`, `gemma3:4b`, and `phi4-mini:3.8b` via Ollama
+1. Pulls `llama3.2:3b`, `gemma3:4b`, and `phi4-mini:3.8b` via Ollama
 2. Frees port 8080 if anything is holding it
 3. Pulls and runs the `hapiproject/hapi:latest` Docker image on port 8080
 
@@ -98,13 +103,7 @@ Drop any `.json` Synthea bundle into `data/input/` and the log confirms upload a
 Open a browser or run curl with a patient ID and optional model:
 
 ```
-http://127.0.0.1:8000/fhir/Patient/{patient_id}?model={model_section}
-```
-
-For example:
-
-```
-http://127.0.0.1:8000/fhir/Patient/2fa15bc7-8866-461a-9000-f739e425860a?model=llama3.2:3b
+http://127.0.0.1:8000/fhir/Patient/{patient_id}?model=llama3.2:3b
 ```
 
 The response includes conditions, medications (active and historical), allergies, and an AI-generated prior-auth summary — all in one call.
@@ -119,13 +118,11 @@ GET /fhir/Patient/{patient_id}?model=llama3.2:3b&_pretty=true
 
 | Parameter    | Default        | Description                                              |
 |--------------|----------------|----------------------------------------------------------|
-| `patient_id` | —              | HAPI resource ID or Synthea UUID (fallback identifier search) |
+| `patient_id` | —              | HAPI resource ID or Synthea UUID                         |
 | `model`      | `llama3.2:3b`  | Model section name from `llm_param.ini`                  |
-| `_pretty`    | `true`         | Indent JSON output for readability                       |
+| `_pretty`    | `true`         | Indent JSON output                                       |
 
-Resolves a patient by HAPI internal resource ID first, then falls back to a UUID identifier search. Fetches conditions, medications, and allergies from HAPI, calls Ollama to generate a prior-auth summary, and returns the full packet in one response.
-
-Medications are split into `active_medications` and `historical_medications` so reviewers and the LLM can immediately distinguish current treatment from past prescriptions — important for prior auth decisions like step therapy verification.
+Resolves the patient, fetches conditions/medications/allergies from HAPI, calls Ollama for a summary, and returns everything in one response. Medications are split into `active_medications` and `historical_medications`.
 
 **Example response:**
 
@@ -176,106 +173,136 @@ Medications are split into `active_medications` and `historical_medications` so 
 
 ### `config_dir/llm_param.ini`
 
-Each `[section]` corresponds to a model identifier passed via the `?model=` query parameter. Parameters in `[DEFAULT]` are inherited by all sections. Add a new model by adding a new section — no code changes required.
+Each `[section]` maps to a model identifier passed via `?model=`. Parameters in `[DEFAULT]` are inherited by all sections — adding a new model is one config block, no code changes.
 
-Available sections: `llama3.2:3b`, `qwen3:4b`, `gemma3:4b`, `phi4-mini:3.8b`
+Available sections: `llama3.2:3b`, `gemma3:4b`, `phi4-mini:3.8b`
 
 ---
 
 ## Model Comparison
 
-All four models received the same prompt template. Tested on available Synthea patients on Apple Silicon (no GPU).
+Evaluated on patient `0718123b` (Floyd Jerde): 23 conditions, 10 active medications, 1,265 historical medications. Apple Silicon, no GPU.
 
-| Model            | Params | Summary quality  | JSON compliance                   | Speed    | Notes                                           |
-| ---------------- | ------ | ---------------- | --------------------------------- | -------- | ----------------------------------------------- |
-| `llama3.2:3b`    | 3B     | Concise, factual | Reliable                          | Fastest  | Best default; minimal post-processing           |
-| `qwen3:4b`       | 4B     | **Not obtained** | **Failed** — emits `<think>` tags | n/a      | Cut after repeated `JSONDecodeError`; see below |
-| `gemma3:4b`      | 4B     | Natural phrasing | Good                              | Moderate | Occasionally over-explains beyond two sentences |
-| `phi4-mini:3.8b` | 3.8B   | Precise          | Good                              | Moderate | Strong instruction-following; clean JSON        |
+| Model            | JSON | Factual grounding | Completeness | Conciseness | Clinical utility | Wall clock | Tokens/sec |
+| ---------------- | ---- | ----------------- | ------------ | ----------- | ---------------- | ---------- | ---------- |
+| `llama3.2:3b`    | Pass | Pass              | 3/3          | Pass        | 3/3              | 1.62 s     | 88.59      |
+| `gemma3:4b`      | Pass | Pass              | 2/3          | Pass        | 2/3              | 5.11 s†    | 71.02      |
+| `phi4-mini:3.8b` | Pass | **Fail**          | 2/3          | Pass        | 1/3              | 1.21 s     | 70.15      |
+| `qwen3:4b`       | **Fail** | n/a           | n/a          | n/a         | n/a              | n/a        | n/a        |
 
-**Chosen default: `llama3.2:3b`** — fastest on CPU, reliably outputs valid JSON within the two-sentence constraint, and smallest footprint for a laptop-only deployment.
+† likely cold-start model load
 
-### Why `qwen3:4b` was cut
+**Chosen default: `llama3.2:3b`**
 
-Qwen emits `<think>…</think>` reasoning blocks and markdown fences even with `format="json"` set, producing `JSONDecodeError` on every run despite three mitigations — a system prompt, a `/no_think` prefix, and multi-tier regex extraction.
+> *"Patient has multiple chronic conditions including hypertension, diabetes, kidney disease, and osteoarthritis, and is taking multiple medications including metformin, insulin, and leuprolide, with a history of prostate cancer and Alzheimer's disease."*
 
-- The next experiment would be Ollama's structured-output mode with an explicit JSON schema, which constrains decoding at the tokenizer level rather than just requesting a format.
+Named the highest-stakes conditions and connected leuprolide to prostate cancer — immediately actionable for a reviewer.
+
+**gemma3:4b** passed factual checks but stayed vague: "neoplasms and neurological events," "various cardiovascular agents." Technically correct, not usable. Also ran 3× slower.
+
+**phi4-mini:3.8b** listed simvastatin (stopped 1980) as a current medication, and double-listed furosemide and Lasix as two separate drugs. Factual grounding failure is a hard disqualifier for prior auth.
+
+**qwen3:4b** emitted `<think>` reasoning blocks and markdown fences despite `format="json"`, causing `JSONDecodeError` on every run. Cut early.
 
 ---
 
-## Observations on 4 Patients
+## Observations on 2 Patients
 
-Reviewed a sample of Synthea patients after ingestion. For each: (1) does the summary reflect only what is on file? (2) does each `source` field resolve to a real FHIR resource?
+### Patient 0718123b — Floyd Jerde (complex history)
 
-| Patient  | Conditions | Active Meds | Historical Meds | Allergies | Summary accurate? | Sources valid? | Notes                                                                                                             |
-| -------- | ---------- | ----------- | --------------- | --------- | ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 0718123b | 20         | 3           | 17              | 0         | Yes               | Yes            | 17 stopped Simvastatin renewals correctly separated from 3 active medications                                     |
-| 74d801e7 | 10         | 2           | 5               | 1         | Yes               | Yes            | Multi-condition patient (chronic pain, migraine, drug overdose); summary scoped correctly; wheat allergy surfaced |
-| c088b7af | 5          | 4           | 0               | 5         | Yes               | Yes            | Complex allergy profile (latex, mould, dust mites, dander, tree pollen) fully captured                            |
-| 10c09023 | 7          | 0           | 0               | 0         | Yes               | Yes            | No medications or allergies on file; correctly flagged in `missing` field                                         |
+23 conditions, 10 active medications, 1,265 historical medications, 0 allergies.
 
-**All source fields verified** by resolving `Condition/{id}`, `MedicationRequest/{id}`, and `AllergyIntolerance/{id}` directly against HAPI FHIR. No hallucinated conditions or medications observed across any run.
+| Model | Factual grounding | Clinical utility | Key finding |
+|---|---|---|---|
+| `llama3.2:3b` | Pass | 3/3 | Named prostate cancer and Alzheimer's; connected leuprolide to cancer treatment |
+| `gemma3:4b` | Pass | 2/3 | "Neoplasms and neurological events" — too vague to act on |
+| `phi4-mini:3.8b` | **Fail** | 1/3 | Listed simvastatin (stopped 1980) as active; double-listed furosemide and Lasix |
 
-**One limitation noted:** `MedicationRequest` returns all statuses including `stopped`. A prior-auth reviewer primarily cares about active medications — filtering by `?status=active` would sharpen summaries for patients with long prescription histories.
+### Patient c088b7af — Alesha Marks (allergy-dominant)
+
+5 conditions, 4 active medications, 0 historical, 5 allergies (latex, mould, dust mites, dander, tree pollen).
+
+| Model | Factual grounding | Clinical utility | Key finding |
+|---|---|---|---|
+| `llama3.2:3b` | Pass | 2/3 | Correct indication mapping; omitted chlorpheniramine |
+| `gemma3:4b` | **Fail** | 1/3 | Attributed albuterol (bronchodilator) to hypertension — direct indication error |
+| `phi4-mini:3.8b` | Pass | 2/3 | Named all 4 medications correctly; no indication mapping |
+
+### Key takeaway
+
+**A wrong indication is worse than a missing medication.** A reviewer who reads that albuterol treats hypertension has been actively misled. llama3.2:3b is the only model that passed factual grounding on both patients — it may omit a drug, but it never mislabels one.
+
+All source fields verified by resolving resource IDs directly against HAPI FHIR.
+
+**Eval scope:** Two patients, developer-scored. A production eval would use a clinician-reviewed golden dataset with ROUGE-L scoring and automated hallucination checks against source FHIR data. Out of scope here due to time constraints, but the indication error rate is the most clinically meaningful signal available.
 
 ---
 
 ## Technical Decisions
 
-**Why preserve Synthea UUIDs on ingestion?**
-HAPI FHIR auto-generates internal IDs on `POST`. By converting bundle entries to `PUT` with the Synthea UUID as the resource ID, the `source` field in every response remains stable and matches the original synthetic record. This makes the clinical citation auditable — a reviewer following a source link gets the right resource.
+**Eval artifacts on every request** — every browser hit, curl call, or eval.py run produces the same metrics automatically. No separate eval mode to invoke; CSV appends build a comparison table across model runs without orchestration.
 
-**Why a polling loop over a filesystem watcher?**
-`watchdog`-style event listeners add an OS-level dependency and can miss events under load. A simple `asyncio` polling loop with a configurable interval is predictable, restart-safe, and tunable via `config.json` without code changes.
+**Historical med grouping in the prompt** — after fixing pagination, Floyd Jerde's 1,265 historical entries doubled the prompt size (1,134 → 2,050 tokens). The model ignored conditions and fixated on one drug. Grouping collapses repeats: `Simvastatin 10 MG (×63, 1965–1980)` instead of 63 lines. Prompt dropped to 796 tokens; quality recovered.
 
-**Why `.ini` for model configuration?**
-INI's `[DEFAULT]` section lets every model section inherit the shared prompt while overriding only what differs. Adding a new model is one block — no JSON nesting, no code edits.
+**HAPI pagination** — default page size is 20. Floyd Jerde has 1,275 medication entries — a single un-paginated call silently returned 20 with no error. `fetch_all_pages()` requests `_count=1000` and follows `link[relation=next]` until the bundle is exhausted.
 
-**Why multi-tier JSON extraction in the parser?**
-Small models occasionally emit markdown fences, preamble text, or (in Qwen3's case) `<think>` reasoning blocks before the JSON. The extraction pipeline strips each layer before `json.loads`, with regex fallbacks so a partially-formed response yields a usable summary rather than an exception that silently loses the result.
+**UUID preservation on ingestion** — HAPI auto-generates IDs on `POST`. Converting to `PUT` with the Synthea UUID keeps every `source` field stable and auditable.
+
+**Polling loop over filesystem watcher** — predictable, configurable without code changes, works across any environment. The 5-second interval feels near-immediate for a demo. A watcher fires faster but adds an OS dependency and can miss events under load.
+
+**INI for model config** — `[DEFAULT]` inheritance means the shared prompt is written once; each model section overrides only what differs.
+
+**Multi-tier JSON extraction** — small models emit fences, preamble text, or reasoning blocks before the JSON. The extractor strips each layer before parsing, with regex fallbacks so a partially-formed response still yields a summary rather than silently failing.
 
 ---
 
 ## Issues Encountered
 
-The problems worth recording are the ones that changed the design.
-
-| Symptom                                                       | Root cause                                                                                                         | Fix                                                                                                            |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Patient UUID `7978d71c…` became `1001` after upload           | HAPI assigns sequential internal IDs on `POST`                                                                     | Rewrote bundle entries to `PUT {ResourceType}/{uuid}` so HAPI stores resources under the Synthea UUID          |
-| UUID lookup worked but integer ID did not (and vice versa)    | Only one lookup path existed                                                                                       | Primary lookup by HAPI resource ID, fallback search by `?identifier=`                                          |
-| Ingestion loop stopped after a single bad file                | Unhandled exception escaped the per-file coroutine                                                                 | Per-file `try/except` so one malformed bundle cannot kill the watcher                                          |
-| `JSONDecodeError` on `qwen3:4b` and occasionally other models | Qwen emits `<think>` blocks and markdown fences; all models can emit unescaped newlines inside string values       | Multi-tier extractor: strip thinking tags → strip fences → isolate outermost `{…}` → escape control characters |
-| Medication status and prescriber absent from summaries        | `parse_bundle()` discarded `status`, `authoredOn`, and `requester.display`; prompt formatter then dropped the rest | `fmt_medications()` renders all three fields into the prompt explicitly                                        |
+| Symptom | Root cause | Fix |
+| --- | --- | --- |
+| Patient UUID became an integer after upload | HAPI assigns sequential IDs on `POST` | Rewrote bundle entries to `PUT {ResourceType}/{uuid}` |
+| UUID lookup worked, integer ID didn't (and vice versa) | Only one lookup path existed | Primary lookup by resource ID, fallback by `?identifier=` |
+| Ingestion loop stopped on one bad file | Unhandled exception escaped the per-file coroutine | Per-file `try/except` |
+| `JSONDecodeError` on Qwen and occasionally others | `<think>` blocks, markdown fences, unescaped newlines | Multi-tier extractor: strip tags → strip fences → isolate `{…}` → escape control chars |
+| Medication status and prescriber missing from summaries | `parse_bundle()` discarded those fields | `fmt_medications()` renders all three fields into the prompt |
+| 1,275 medications but model only saw 20 | HAPI's default page size is 20; no error is returned | `fetch_all_pages()` with `_count=1000` and `link[relation=next]` traversal |
+| Model quality regressed after pagination fix | 1,265 historical entries doubled prompt size; model fixated on one mid-list drug | Group historical meds by drug name before building the prompt |
 
 ---
 
 ## Next Steps
 
-The three most impactful next steps are decoupling ingestion from the API into independent services, replacing directory polling with Kafka for horizontal scale, and adding a PHI de-identification stage before any text reaches the model. Filtering to active medications via `MedicationRequest?status=active` would also sharpen summaries — one patient carried 16 obsolete Simvastatin records against 3 active medications.
+To move this toward production:
+
+- **Decouple ingestion from the API** — independent services that scale separately; replace polling with a message queue (e.g. Kafka).
+- **Add PHI de-identification before inference** — scrub identifiers from the prompt before any text reaches the model, even on-premise.
+- **Authenticate and authorize every request** — OAuth2/JWT on the endpoint with patient-level access control.
+- **Persist model outputs to a database** — replace flat files with Postgres or DynamoDB for audit trails and retrieval without re-running inference.
+- **Schema-constrained LLM decoding** — enforce JSON at the token level (Ollama schema mode or Outlines), eliminating the regex fallback extractor.
+- **Golden evaluation dataset** — clinician-reviewed reference summaries with automated factual-grounding checks in CI.
 
 ---
 
 ## Attribution
 
-The assignment asks where the code came from. Stated plainly:
-
 ### My own work
 
-Architecture and component boundaries; the decision to preserve Synthea UUIDs through ingestion and why it matters for citation integrity; configuration design for both `config.json` and `llm_param.ini` (including the `[DEFAULT]`-inheritance pattern that makes adding a model a config change); prompt engineering and per-model tuning; model selection, benchmarking, and the clinical evaluation of sampled patients.
+Architecture and component boundaries; UUID preservation design; configuration structure for `config.json` and `llm_param.ini`; prompt engineering and per-model tuning; model selection and clinical evaluation.
 
-### AI assistance — Google Gemini
+Diagnosis of every issue was mine — I identified the symptom, traced the root cause, and defined what the fix had to do. AI helped move from diagnosis to working code faster, which is exactly the point of a 4–8 hour assignment.
 
-Roughly **20–25 prompts**, used as a debugging partner rather than a code generator. Nearly all of them map directly to entries in the [Issues Encountered](#issues-encountered) section above — HAPI reassigning resource IDs on `POST`, the Qwen3 `<think>`-tag parsing failures, the FastAPI route template mismatch, the Ollama read timeout, and the two-layer metadata truncation between `parse_bundle()` and the prompt formatter.
+### AI assistance
 
-The pattern was consistent: I identified the symptom and the constraint, Gemini helped narrow the cause and draft the patch, and I decided whether the fix belonged in the design. The multi-tier JSON extractor is the clearest example — the regex layers came out of that back-and-forth, but the decision to degrade gracefully rather than raise (so a completed inference is never discarded) was mine.
+**Google Gemini** (~20–25 prompts) — used as a debugging partner after the foundation was in place. Key examples: I spotted the pagination gap by comparing the raw bundle count (1,275) to the API output (20); Gemini drafted `fetch_all_pages()`. I spotted the post-fix regression by comparing summaries before and after; Gemini helped implement the historical medication grouper. In both cases the diagnosis was mine; Gemini compressed the implementation time. Also helped structure and format this README.
+
+**Claude** — assisted with `fetch_all_pages()`, the `fmt_historical_meds()` grouper, and refactoring `eval.py` into a thin CLI wrapper.
 
 ### Open source
 
-| Component               | Source                                                                                         |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| Synthetic patient data  | [Synthea](https://synthea.mitre.org/) (MITRE)                                                  |
-| FHIR server             | [HAPI FHIR](https://hapifhir.io/)                                                              |
-| Local inference runtime | [Ollama](https://ollama.com/)                                                                  |
-| Models                  | `llama3.2:3b` (Meta), `qwen3:4b` (Alibaba), `gemma3:4b` (Google), `phi4-mini:3.8b` (Microsoft) |
-| Service layer           | [FastAPI](https://fastapi.tiangolo.com/), Pydantic, httpx, uvicorn                             |
+| Component               | Source                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| Synthetic patient data  | [Synthea](https://synthea.mitre.org/) (MITRE)                                                   |
+| FHIR server             | [HAPI FHIR](https://hapifhir.io/)                                                               |
+| Local inference runtime | [Ollama](https://ollama.com/)                                                                   |
+| Models                  | `llama3.2:3b` (Meta), `gemma3:4b` (Google), `phi4-mini:3.8b` (Microsoft)                       |
+| Service layer           | [FastAPI](https://fastapi.tiangolo.com/), Pydantic, httpx, uvicorn                              |

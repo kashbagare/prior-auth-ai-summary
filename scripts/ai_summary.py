@@ -1,6 +1,7 @@
 import json
 import configparser
 import time
+from collections import defaultdict
 from string import Template
 import httpx
 import re
@@ -19,9 +20,6 @@ def extract_json_payload(raw_response: str) -> str:
         return ""
 
     cleaned = raw_response.strip()
-
-    # Qwen3 emits <think>...</think> reasoning blocks — commented out since Qwen is not in use.
-    # cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
 
     # \1 keeps only the content inside the fence, discarding the backticks and optional "json" label.
     cleaned = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", cleaned, flags=re.DOTALL).strip()
@@ -56,7 +54,6 @@ def parse_summary_from_response(raw_text: str) -> str:
         return match.group(1).replace('\\n', ' ').strip()
 
     # Tier 3: last resort — return cleaned plain text so a completed inference is never silently discarded.
-    # clean_fallback = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()  # Qwen3 only
     clean_fallback = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", raw_text, flags=re.DOTALL).strip()
     if clean_fallback:
         return clean_fallback
@@ -95,28 +92,45 @@ async def generate_summary(conditions: list, active_meds: list, historical_meds:
     def fmt_conditions_or_allergies(items):
         return ", ".join(i["display"] for i in items) if items else "none"
 
-    def fmt_med_list(items):
+    def fmt_active_meds(items):
         if not items:
             return "none"
-        formatted_meds = []
+        parts = []
         for m in items:
             details = m["display"]
             meta = []
             if m.get("authoredOn"):
-                meta.append(f"Authored: {m['authoredOn']}")
+                meta.append(f"since {m['authoredOn'][:10]}")
             if m.get("practioner"):
-                meta.append(f"Prescriber: {m['practioner']}")
-            # Only append metadata parens if there is actually metadata to show.
+                meta.append(f"by {m['practioner']}")
             if meta:
                 details += f" ({', '.join(meta)})"
-            formatted_meds.append(details)
-        return "; ".join(formatted_meds)
+            parts.append(details)
+        return "; ".join(parts)
+
+    def fmt_historical_meds(items):
+        # Group by drug name and collapse repeats into a count + date range to keep the prompt compact.
+        if not items:
+            return "none"
+        groups: dict[str, list[str]] = defaultdict(list)
+        for m in items:
+            raw_date = m.get("authoredOn", "")
+            groups[m["display"]].append(raw_date[:10] if raw_date else "")
+        parts = []
+        for display, dates in groups.items():
+            dates = sorted(d for d in dates if d)
+            count = len(groups[display])
+            if count == 1:
+                parts.append(f"{display} (×1{', ' + dates[0] if dates else ''})")
+            else:
+                date_range = f", {dates[0]} to {dates[-1]}" if dates else ""
+                parts.append(f"{display} (×{count}{date_range})")
+        return "; ".join(parts)
 
     def fmt_medications(active, historical):
-        # Explicit labels tell the LLM which group is active vs historical so it focuses the summary correctly.
         return (
-            f"Active medications: {fmt_med_list(active)} | "
-            f"Historical medications (stopped, completed, on-hold): {fmt_med_list(historical)}"
+            f"Active medications: {fmt_active_meds(active)} | "
+            f"Historical medications (stopped/completed, grouped by drug): {fmt_historical_meds(historical)}"
         )
 
     model_params, prompt_template = load_model_config(model_section)

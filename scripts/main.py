@@ -1,13 +1,39 @@
+import csv
 import json
+import os
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional, List
 from fastapi import FastAPI, Query, HTTPException, status, Response
 from pydantic import BaseModel, ConfigDict
+from pathlib import Path
 import httpx
 
 from load_json import run_ingestion_loop, load_config
 from ai_summary import generate_summary
+
+
+async def fetch_all_pages(client: httpx.AsyncClient, url: str) -> dict:
+    """Collect all entries across HAPI pages and return them as a single merged bundle."""
+    all_entries = []
+    next_url: str | None = url
+    while next_url:
+        resp = await client.get(next_url)
+        if resp.status_code != 200:
+            break
+        bundle = resp.json()
+        all_entries.extend(bundle.get("entry", []))
+        # HAPI signals more pages with a link entry where relation == "next".
+        next_url = next(
+            (lnk["url"] for lnk in bundle.get("link", []) if lnk.get("relation") == "next"),
+            None,
+        )
+    return {"entry": all_entries}
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PAYLOAD_OUTPUT_FILE = str(_PROJECT_ROOT / "json_out" / "ai_summary.json")
+METRICS_JSON_FILE = str(_PROJECT_ROOT / "json_out" / "ai_summary_metrics.json")
+METRICS_CSV_FILE = str(_PROJECT_ROOT / "csv_out" / "ai_summary_metrics.csv")
 
 # Module-level handle so the lifespan shutdown hook can cancel the ingestion task.
 ingestion_task = None
@@ -75,7 +101,7 @@ async def get_patient_history(
     config = load_config()
     hapi_url = config.get("hapi_url", "http://localhost:8080/fhir")
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             patient_resource = None
 
@@ -104,22 +130,19 @@ async def get_patient_history(
             # resolved_id is HAPI's internal ID — used for all sub-queries regardless of how the patient was looked up.
             resolved_id = patient_resource.get("id", patient_id)
 
-            # Fetch the three clinical resource types linked to this patient using FHIR search syntax.
-            cond_resp = await client.get(f"{hapi_url}/Condition?patient=Patient/{resolved_id}")
-            med_resp = await client.get(f"{hapi_url}/MedicationRequest?patient=Patient/{resolved_id}")
-            alg_resp = await client.get(f"{hapi_url}/AllergyIntolerance?patient=Patient/{resolved_id}")
+            # Fetch all pages for each resource type; _count=1000 reduces round-trips for large histories.
+            cond_bundle = await fetch_all_pages(client, f"{hapi_url}/Condition?patient=Patient/{resolved_id}&_count=1000")
+            med_bundle = await fetch_all_pages(client, f"{hapi_url}/MedicationRequest?patient=Patient/{resolved_id}&_count=1000")
+            alg_bundle = await fetch_all_pages(client, f"{hapi_url}/AllergyIntolerance?patient=Patient/{resolved_id}&_count=1000")
 
-        except httpx.ConnectError:
-            # Raised when HAPI is not running; return 503 with a clear message instead of an internal 500.
+        except httpx.HTTPError:
+            # Covers ConnectError (HAPI not running) and ReadTimeout (HAPI too slow to respond).
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Unable to connect to local HAPI FHIR server."
             )
 
     def parse_bundle(bundle_json, resource_type):
-        """Extracts display name and source reference from each entry in a HAPI search bundle,
-        adding status/authoredOn/prescriber for MedicationRequest resources."""
-        # Defined inside the route handler so it's co-located with the code that uses it; only this route needs it.
         items = []
         if not bundle_json or "entry" not in bundle_json:
             return items
@@ -145,10 +168,9 @@ async def get_patient_history(
             items.append(item)
         return items
 
-    # Only parse the body if HAPI returned 200; pass {} otherwise so parse_bundle returns an empty list safely.
-    conditions = parse_bundle(cond_resp.json() if cond_resp.status_code == 200 else {}, "Condition")
-    medications = parse_bundle(med_resp.json() if med_resp.status_code == 200 else {}, "MedicationRequest")
-    allergies = parse_bundle(alg_resp.json() if alg_resp.status_code == 200 else {}, "AllergyIntolerance")
+    conditions = parse_bundle(cond_bundle, "Condition")
+    medications = parse_bundle(med_bundle, "MedicationRequest")
+    allergies = parse_bundle(alg_bundle, "AllergyIntolerance")
 
     # != "active" catches stopped, completed, on-hold, and unknown status so nothing falls through to the wrong list.
     active_medications = [m for m in medications if m.get("status") == "active"]
@@ -162,8 +184,8 @@ async def get_patient_history(
     if not allergies:
         missing_list.append("No active allergies logged")
 
-    # Call Ollama with the parsed clinical lists; returns summary string + performance metrics (metrics discarded here).
-    summary_text, _ = await generate_summary(conditions, active_medications, historical_medications, allergies, model or "llama3.2:3b")
+    # Call Ollama with the parsed clinical lists; capture metrics for eval output files.
+    summary_text, metrics = await generate_summary(conditions, active_medications, historical_medications, allergies, model or "llama3.2:3b")
 
     # Assemble the full response dict; PatientHistoryResponse validates and serializes it on return.
     base_response = {
@@ -175,6 +197,24 @@ async def get_patient_history(
         "summary": summary_text,
         "missing": missing_list
     }
+
+    # Write eval artifacts on every request — browser, curl, or eval.py all produce the same output.
+    os.makedirs(os.path.dirname(PAYLOAD_OUTPUT_FILE), exist_ok=True)
+    with open(PAYLOAD_OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(base_response, f, indent=2)
+
+    os.makedirs(os.path.dirname(METRICS_JSON_FILE), exist_ok=True)
+    with open(METRICS_JSON_FILE, "w", encoding="utf-8") as f:
+        json.dump({"patient_id": patient_id, "performance_metrics": metrics}, f, indent=2)
+
+    csv_row = {"patient_id": patient_id, **metrics}
+    os.makedirs(os.path.dirname(METRICS_CSV_FILE), exist_ok=True)
+    file_exists = os.path.isfile(METRICS_CSV_FILE)
+    with open(METRICS_CSV_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(csv_row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(csv_row)
 
     # Returning a raw Response with indent=2 bypasses FastAPI's compact serializer so the output is human-readable by default.
     if _pretty:
