@@ -50,8 +50,6 @@ class MedicationDetail(BaseModel):
 class PatientHistoryResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     patient_id: str
-    original_patient_id: Optional[str] = None  # Synthea UUID recovered from the Patient identifier array
-    hapi_patient_id: str                        # HAPI's internal resource ID used for all sub-queries
     conditions: List[ResourceDetail] = []
     active_medications: List[MedicationDetail] = []
     historical_medications: List[MedicationDetail] = []
@@ -105,14 +103,6 @@ async def get_patient_history(
 
             # resolved_id is HAPI's internal ID — used for all sub-queries regardless of how the patient was looked up.
             resolved_id = patient_resource.get("id", patient_id)
-
-            # Walk the identifier array to recover the original Synthea UUID (hyphens indicate UUID format).
-            original_uuid = None
-            for ident in patient_resource.get("identifier", []):
-                val = ident.get("value")
-                if val and ("-" in val or ident.get("system") == "urn:ietf:rfc:3986"):
-                    original_uuid = val
-                    break
 
             # Fetch the three clinical resource types linked to this patient using FHIR search syntax.
             cond_resp = await client.get(f"{hapi_url}/Condition?patient=Patient/{resolved_id}")
@@ -178,8 +168,6 @@ async def get_patient_history(
     # Assemble the full response dict; PatientHistoryResponse validates and serializes it on return.
     base_response = {
         "patient_id": patient_id,
-        "original_patient_id": original_uuid if original_uuid else patient_id,
-        "hapi_patient_id": resolved_id,
         "conditions": conditions,
         "active_medications": active_medications,
         "historical_medications": historical_medications,

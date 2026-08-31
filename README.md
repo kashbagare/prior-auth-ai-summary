@@ -132,8 +132,6 @@ Medications are split into `active_medications` and `historical_medications` so 
 ```json
 {
   "patient_id": "2fa15bc7-8866-461a-9000-f739e425860a",
-  "original_patient_id": "2fa15bc7-8866-461a-9000-f739e425860a",
-  "hapi_patient_id": "2fa15bc7-8866-461a-9000-f739e425860a",
   "conditions": [{ "display": "Diabetes", "source": "Condition/1a2b3c" }],
   "active_medications": [
     {
