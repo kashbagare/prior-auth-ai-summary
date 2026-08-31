@@ -1,0 +1,2 @@
+patient_id,model_section,ollama_model,wall_clock_time_seconds,ollama_total_duration_ms,ollama_eval_duration_ms,prompt_tokens,completion_tokens,total_tokens,tokens_per_second
+10c09023-42cd-4ed8-9055-09bf6120c7dd,llama3.2:3b,llama3.2:3b,2.463,2455.02,308.01,197,29,226,94.15

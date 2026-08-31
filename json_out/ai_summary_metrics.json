@@ -1,0 +1,14 @@
+{
+  "patient_id": "10c09023-42cd-4ed8-9055-09bf6120c7dd",
+  "performance_metrics": {
+    "model_section": "llama3.2:3b",
+    "ollama_model": "llama3.2:3b",
+    "wall_clock_time_seconds": 2.463,
+    "ollama_total_duration_ms": 2455.02,
+    "ollama_eval_duration_ms": 308.01,
+    "prompt_tokens": 197,
+    "completion_tokens": 29,
+    "total_tokens": 226,
+    "tokens_per_second": 94.15
+  }
+}
