@@ -202,7 +202,7 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 
 ## Observations on 2 Patients
 
-### Patient 0718123b — Floyd Jerde (complex history)
+### Patient 1 — Floyd Jerde (complex history)
 
 23 conditions, 10 active medications, 1,265 historical medications, 0 allergies.
 
@@ -213,7 +213,7 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 | `phi4-mini:3.8b` | Pass | 3/3 | Named all 10 active meds correctly, incl. oncology/dementia drugs (DOCEtaxel, Leuprolide, Donepezil); no hallucinations this run |
 | `qwen3:4b` | **Fail** | 1/3 | Listed simvastatin as historical only, omitting its active order; named all 23 conditions but in one unstructured run-on sentence |
 
-### Patient c088b7af — Alesha Marks (allergy-dominant)
+### Patient 2 — Alesha Marks (allergy-dominant)
 
 5 conditions, 4 active medications, 0 historical, 5 allergies (latex, mould, dust mites, dander, tree pollen).
 
