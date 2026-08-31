@@ -43,6 +43,8 @@ cd prior-auth-ai-summary
 
 ### Step 2 — Pull Ollama models and start HAPI FHIR
 
+> **Prerequisite:** Docker Desktop must be installed and running before this step. Download it at [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
+
 Open a dedicated terminal window and run:
 
 ```bash
@@ -61,20 +63,14 @@ This does three things in sequence:
 
 > To run HAPI FHIR in the background instead: `docker run -d -p 8080:8080 hapiproject/hapi:latest`
 
-### Step 3 — Install Python dependencies
+### Step 3 — Start FastAPI + ETL pipeline
+
+Open a second terminal window:
 
 ```bash
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-### Step 4 — Start FastAPI + ETL pipeline
-
-Open a second terminal window:
-
-```bash
-source venv/bin/activate
 python scripts/main.py
 ```
 
@@ -87,7 +83,7 @@ Drop any `.json` Synthea bundle into `data/input/` and the log confirms upload a
 
 **Keep this terminal open.**
 
-### Step 5 — Generate an AI summary (per patient)
+### Step 4 — Generate an AI summary (per patient)
 
 Open a third terminal window:
 
