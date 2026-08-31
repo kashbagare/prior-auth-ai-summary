@@ -14,33 +14,52 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 CONFIG_FILE = str(_PROJECT_ROOT / "config_dir" / "llm_param.ini")
 
 
+# Control characters JSON forbids unescaped inside a string literal.
+_STRING_ESCAPES = {"\n": "\\n", "\t": "\\t", "\r": "\\r"}
+
+
 def extract_json_payload(raw_response: str) -> str:
-    """Strips thinking tags, markdown formatting, and prelude text to isolate valid JSON."""
+    """Escapes raw control characters inside JSON string values so json.loads accepts them."""
     if not raw_response:
         return ""
 
-    cleaned = raw_response.strip()
+    # "format": "json" constrains Ollama's sampler to emit a bare JSON document, so there are no
+    # markdown fences or prose preamble to strip. The one thing the grammar does not guarantee is
+    # that a literal newline inside a string value gets escaped, which json.loads rejects.
+    # A character scanner (not a regex) because only newlines *inside* a string need escaping —
+    # escaping the structural ones between tokens (e.g. pretty-printed JSON) makes it invalid.
+    out = []
+    in_string = False   # True while the cursor is inside a JSON string literal
+    escaped = False     # True for one character after a backslash, to skip \" without closing the string
 
-    # \1 keeps only the content inside the fence, discarding the backticks and optional "json" label.
-    cleaned = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", cleaned, flags=re.DOTALL).strip()
+    for ch in raw_response.strip():
+        if in_string:
+            if escaped:
+                # Previous char was a backslash — this char is part of an escape sequence, pass it through.
+                escaped = False
+            elif ch == "\\":
+                # Start of an escape sequence; the next character should not be interpreted.
+                escaped = True
+            elif ch == '"':
+                # Closing quote — exit string mode.
+                in_string = False
+            elif ch in _STRING_ESCAPES:
+                # Raw control character inside a string — replace with its JSON escape sequence.
+                out.append(_STRING_ESCAPES[ch])
+                continue
+        elif ch == '"':
+            # Opening quote — enter string mode.
+            in_string = True
+        out.append(ch)
 
-    # Greedy .* finds the outermost braces, discarding any preamble text the model wrote before the JSON.
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if match:
-        cleaned = match.group(0).strip()
-
-    # Negative lookbehind (?<!\\) ensures only truly raw newlines/tabs are escaped — json.loads rejects them as-is.
-    cleaned = re.sub(r'(?<!\\)\n', r'\\n', cleaned)
-    cleaned = re.sub(r'(?<!\\)\t', r'\\t', cleaned)
-
-    return cleaned
+    return "".join(out)
 
 
 def parse_summary_from_response(raw_text: str) -> str:
     """Multi-tiered parser ensuring all models return a string summary without failing."""
     sanitized_str = extract_json_payload(raw_text)
 
-    # Tier 1: clean JSON parse, the happy path for well-behaved models.
+    # Tier 1: standard JSON parse after sanitization — the expected path for all models.
     try:
         data = json.loads(sanitized_str)
         if isinstance(data, dict) and "summary" in data:
@@ -48,12 +67,14 @@ def parse_summary_from_response(raw_text: str) -> str:
     except json.JSONDecodeError:
         pass
 
-    # Tier 2: regex on the raw text in case brace isolation failed but the key is still findable.
+    # Tier 2: key-value regex on the raw text. Catches cases where the outer JSON is malformed
+    # but the "summary" key and its value are still findable (e.g. trailing comma, extra whitespace).
     match = re.search(r'"summary"\s*:\s*"(.*?)"', raw_text, re.DOTALL)
     if match:
         return match.group(1).replace('\\n', ' ').strip()
 
-    # Tier 3: last resort — return cleaned plain text so a completed inference is never silently discarded.
+    # Tier 3: last resort — strip any markdown fences and return raw text so a completed
+    # inference is never silently discarded as "Summary unavailable."
     clean_fallback = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", raw_text, flags=re.DOTALL).strip()
     if clean_fallback:
         return clean_fallback
@@ -170,8 +191,10 @@ async def generate_summary(conditions: list, active_meds: list, historical_meds:
         elapsed_seconds = round(time.perf_counter() - start_time, 3)
         res_data = resp.json()
 
-        # Ollama puts the model's full text output in the "response" key.
-        raw_text = res_data.get("response", "")
+        # Ollama puts the model's full text output in the "response" key. Reasoning models such as
+        # qwen3 route theirs to "thinking" instead and leave "response" empty, so fall back to it
+        # rather than discarding a completed inference as a failure.
+        raw_text = res_data.get("response") or res_data.get("thinking") or ""
 
         # Run the multi-tier extractor to get a clean summary string regardless of model output format.
         summary_text = parse_summary_from_response(raw_text)

@@ -64,7 +64,7 @@ sh setup.sh
 
 This does three things in sequence:
 
-1. Pulls `llama3.2:3b`, `gemma3:4b`, and `phi4-mini:3.8b` via Ollama
+1. Pulls `llama3.2:3b`, `qwen3:4b`, `gemma3:4b`, and `phi4-mini:3.8b` via Ollama
 2. Frees port 8080 if anything is holding it
 3. Pulls and runs the `hapiproject/hapi:latest` Docker image on port 8080
 
@@ -171,7 +171,7 @@ Resolves the patient, fetches conditions/medications/allergies from HAPI, calls 
 
 Each `[section]` maps to a model identifier passed via `?model=`. Parameters in `[DEFAULT]` are inherited by all sections — adding a new model is one config block, no code changes.
 
-Available sections: `llama3.2:3b`, `gemma3:4b`, `phi4-mini:3.8b`
+Available sections: `llama3.2:3b`, `gemma3:4b`, `phi4-mini:3.8b`, `qwen3:4b`
 
 ---
 
@@ -181,24 +181,22 @@ Evaluated on patient `0718123b` (Floyd Jerde): 23 conditions, 10 active medicati
 
 | Model            | JSON | Factual grounding | Completeness | Conciseness | Clinical utility | Wall clock | Tokens/sec |
 | ---------------- | ---- | ----------------- | ------------ | ----------- | ---------------- | ---------- | ---------- |
-| `llama3.2:3b`    | Pass | Pass              | 3/3          | Pass        | 3/3              | 1.62 s     | 88.59      |
-| `gemma3:4b`      | Pass | Pass              | 2/3          | Pass        | 2/3              | 2.23 s     | 71.02      |
-| `phi4-mini:3.8b` | Pass | **Fail**          | 2/3          | Pass        | 1/3              | 1.21 s     | 70.15      |
-| `qwen3:4b`       | **Fail** | n/a           | n/a          | n/a         | n/a              | n/a        | n/a        |
+| `llama3.2:3b`    | Pass | Pass              | 3/3          | Pass        | 3/3              | 3.13 s     | 89.00      |
+| `gemma3:4b`      | Pass | Pass              | 2/3          | Pass        | 2/3              | 5.14 s     | 71.10      |
+| `phi4-mini:3.8b` | Pass | Pass              | 3/3          | Pass        | 3/3              | 1.17 s     | 73.98      |
+| `qwen3:4b`       | Pass | **Fail**          | 3/3          | Pass        | 1/3              | 5.24 s     | 71.01      |
 
-Wall-clock times are indicative — they vary run to run with machine load. Tokens/sec is the more stable comparison.
+Wall-clock times vary run to run with machine load; tokens/sec is the more stable comparison.
 
 **Chosen default: `llama3.2:3b`**
 
-> *"Patient has multiple chronic conditions including hypertension, diabetes, kidney disease, and osteoarthritis, and is taking multiple medications including metformin, insulin, and leuprolide, with a history of prostate cancer and Alzheimer's disease."*
+> *"Patient has multiple chronic conditions including hypertension, diabetes, kidney disease, and osteoarthritis, and is currently taking several medications including metformin, insulin, and metoprolol, with a history of prostate cancer and Alzheimer's disease."*
 
-Named the highest-stakes conditions and connected leuprolide to prostate cancer — immediately actionable for a reviewer.
+**Why:** it's the only model that states high-stakes diagnoses directly (prostate cancer, Alzheimer's) rather than requiring the reviewer to infer them from drug names — the safer default for a PA-reviewer audience. It also ties for the top score on every rubric column.
 
-**gemma3:4b** passed factual checks but stayed vague: "neoplasms and neurological events," "various cardiovascular agents." Technically correct, not usable. Also somewhat slower — ~20% lower throughput.
-
-**phi4-mini:3.8b** listed simvastatin (stopped 1980) as a current medication, and double-listed furosemide and Lasix as two separate drugs. Factual grounding failure is a hard disqualifier for prior auth.
-
-**qwen3:4b** emitted `<think>` reasoning blocks and markdown fences despite `format="json"`, causing `JSONDecodeError` on every run. Cut early.
+- **`phi4-mini:3.8b`** — ties llama3.2 on every column and is faster, but only implies diagnoses via drug names (DOCEtaxel, Leuprolide).
+- **`gemma3:4b`** — passes grounding but inconsistent run to run; sometimes drops the highest-stakes findings entirely.
+- **`qwen3:4b`** — routes output to a `thinking` field, not `response` (fixed via fallback); still fails grounding on Simvastatin's active order.
 
 ---
 
@@ -210,9 +208,10 @@ Named the highest-stakes conditions and connected leuprolide to prostate cancer 
 
 | Model | Factual grounding | Clinical utility | Key finding |
 |---|---|---|---|
-| `llama3.2:3b` | Pass | 3/3 | Named prostate cancer and Alzheimer's; connected leuprolide to cancer treatment |
-| `gemma3:4b` | Pass | 2/3 | "Neoplasms and neurological events" — too vague to act on |
-| `phi4-mini:3.8b` | **Fail** | 1/3 | Listed simvastatin (stopped 1980) as active; double-listed furosemide and Lasix |
+| `llama3.2:3b` | Pass | 3/3 | Named prostate cancer and Alzheimer's directly alongside core chronic disease burden |
+| `gemma3:4b` | Pass | 2/3 | Run-to-run variance: one run omitted prostate cancer and Alzheimer's entirely, naming "surgical interventions" instead |
+| `phi4-mini:3.8b` | Pass | 3/3 | Named all 10 active meds correctly, incl. oncology/dementia drugs (DOCEtaxel, Leuprolide, Donepezil); no hallucinations this run |
+| `qwen3:4b` | **Fail** | 1/3 | Listed simvastatin as historical only, omitting its active order; named all 23 conditions but in one unstructured run-on sentence |
 
 ### Patient c088b7af — Alesha Marks (allergy-dominant)
 
@@ -220,17 +219,22 @@ Named the highest-stakes conditions and connected leuprolide to prostate cancer 
 
 | Model | Factual grounding | Clinical utility | Key finding |
 |---|---|---|---|
-| `llama3.2:3b` | Pass | 2/3 | Correct indication mapping; omitted chlorpheniramine |
-| `gemma3:4b` | **Fail** | 1/3 | Attributed albuterol (bronchodilator) to hypertension — direct indication error |
+| `llama3.2:3b` | Pass | 2/3 | Named all 4 medications and all 5 allergies by name; omitted viral sinusitis as a separate condition |
+| `gemma3:4b` | Pass | 2/3 | Correctly tied hydrochlorothiazide to hypertension; grouped the other 3 drugs by class (corticosteroid/bronchodilator/antihistamine) without naming them |
 | `phi4-mini:3.8b` | Pass | 2/3 | Named all 4 medications correctly; no indication mapping |
+| `qwen3:4b` | Pass | 2/3 | Named all 4 medications correctly; no indication mapping; omitted the allergy list entirely |
 
 ### Key takeaway
 
-**A wrong indication is worse than a missing medication.** A reviewer who reads that albuterol treats hypertension has been actively misled. llama3.2:3b is the only model that passed factual grounding on both patients — it may omit a drug, but it never mislabels one.
+**Complexity, not simplicity, is where models separate.**
 
-All source fields verified by resolving resource IDs directly against HAPI FHIR.
+- All four models pass on Alesha's simple record; only Floyd's harder one differentiates them.
+- Two previously-documented failures (gemma3, phi4-mini) didn't reproduce after the prompt/parser fixes.
+- `qwen3:4b` still fails on Floyd — reads Simvastatin's active order as historical-only, a data ambiguity, not a fabrication.
+- `llama3.2:3b` and `phi4-mini:3.8b` tie on Floyd; llama3.2 states diagnoses directly, phi4-mini is faster.
+- All fields verified against HAPI FHIR source.
 
-**Eval scope:** Two patients, developer-scored. A production eval would use a clinician-reviewed golden dataset with ROUGE-L scoring and automated hallucination checks against source FHIR data. Out of scope here due to time constraints, but the indication error rate is the most clinically meaningful signal available.
+**Eval scope:** Two patients, developer-scored — a production eval would need a clinician-reviewed golden dataset with automated hallucination checks.
 
 ---
 
@@ -248,7 +252,7 @@ All source fields verified by resolving resource IDs directly against HAPI FHIR.
 
 **INI for model config** — `[DEFAULT]` inheritance means the shared prompt is written once; each model section overrides only what differs.
 
-**Multi-tier JSON extraction** — small models emit fences, preamble text, or reasoning blocks before the JSON. The extractor strips each layer before parsing, with regex fallbacks so a partially-formed response still yields a summary rather than silently failing.
+**Multi-tier JSON extraction** — `format: json` constrains Ollama's sampler to emit a bare JSON document, so there are no fences or preamble to strip. The remaining risk is unescaped control characters inside string values (literal newlines), which `json.loads` rejects. A character scanner fixes these in-string only — escaping structural newlines between tokens would corrupt valid pretty-printed JSON. Regex fallbacks on the raw text catch any cases where the outer structure is still malformed.
 
 ---
 
@@ -259,7 +263,8 @@ All source fields verified by resolving resource IDs directly against HAPI FHIR.
 | Patient UUID became an integer after upload | HAPI assigns sequential IDs on `POST` | Rewrote bundle entries to `PUT {ResourceType}/{uuid}` |
 | UUID lookup worked, integer ID didn't (and vice versa) | Only one lookup path existed | Primary lookup by resource ID, fallback by `?identifier=` |
 | Ingestion loop stopped on one bad file | Unhandled exception escaped the per-file coroutine | Per-file `try/except` |
-| `JSONDecodeError` on Qwen and occasionally others | `<think>` blocks, markdown fences, unescaped newlines | Multi-tier extractor: strip tags → strip fences → isolate `{…}` → escape control chars |
+| Empty summaries from `qwen3:4b` | Ollama routes reasoning-model output to a `thinking` field, not `response`; code only read `response` | Read `thinking` as fallback when `response` is empty |
+| `JSONDecodeError` on some models | Literal newlines inside JSON string values — `json.loads` rejects unescaped control characters | Character scanner escapes control chars inside strings only; regex fallback catches remaining malformed output |
 | Medication status and prescriber missing from summaries | `parse_bundle()` discarded those fields | `fmt_medications()` renders all three fields into the prompt |
 | 1,275 medications but model only saw 20 | HAPI's default page size is 20; no error is returned | `fetch_all_pages()` with `_count=1000` and `link[relation=next]` traversal |
 | Model quality regressed after pagination fix | 1,265 historical entries doubled prompt size; model fixated on one mid-list drug | Group historical meds by drug name before building the prompt |
@@ -283,22 +288,10 @@ To move this toward production:
 
 ### My own work
 
-Architecture and component boundaries; UUID preservation design; configuration structure for `config.json` and `llm_param.ini`; prompt engineering and per-model tuning; model selection and clinical evaluation.
+Architecture and component boundaries; UUID preservation design; configuration structure for `config.json` and `llm_param.ini`; prompt engineering; model selection and clinical evaluation.
 
 Diagnosis of every issue was mine — I identified the symptom, traced the root cause, and defined what the fix had to do. AI helped move from diagnosis to working code faster, which is exactly the point of a 4–8 hour assignment.
 
 ### AI assistance
 
-**Google Gemini** (~20–25 prompts) — used as a debugging partner after the foundation was in place. Key examples: I spotted the pagination gap by comparing the raw bundle count (1,275) to the API output (20); Gemini drafted `fetch_all_pages()`. I spotted the post-fix regression by comparing summaries before and after; Gemini helped implement the historical medication grouper. In both cases the diagnosis was mine; Gemini compressed the implementation time. Also helped structure and format this README.
-
-**Claude** — assisted with `fetch_all_pages()` and the `fmt_historical_meds()` grouper.
-
-### Open source
-
-| Component               | Source                                                                                          |
-| ----------------------- | ----------------------------------------------------------------------------------------------- |
-| Synthetic patient data  | [Synthea](https://synthea.mitre.org/) (MITRE)                                                   |
-| FHIR server             | [HAPI FHIR](https://hapifhir.io/)                                                               |
-| Local inference runtime | [Ollama](https://ollama.com/)                                                                   |
-| Models                  | `llama3.2:3b` (Meta), `gemma3:4b` (Google), `phi4-mini:3.8b` (Microsoft)                       |
-| Service layer           | [FastAPI](https://fastapi.tiangolo.com/), Pydantic, httpx, uvicorn                              |
+**Google Gemini** (~20–25 prompts) — used as a debugging partner after the foundation was in place. Key examples: I spotted the pagination gap by comparing the raw bundle count (1,275) to the API output (20); Gemini drafted `fetch_all_pages()`. I spotted the post-fix regression by comparing summaries before and after; Gemini helped implement the `fmt_historical_meds()` grouper. In both cases the diagnosis was mine; Gemini compressed the implementation time. Also handled per-model parameter tuning in `llm_param.ini`, and helped structure and format this README.
