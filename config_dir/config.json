@@ -4,8 +4,5 @@
   "delete_after_upload": false,
   "poll_interval_seconds": 5,
   "max_concurrent_uploads": 10,
-  "hapi_url": "http://localhost:8080/fhir",
-  "custom_metadata": {
-    "system_status": "Active"
-  }
+  "hapi_url": "http://localhost:8080/fhir"
 }
