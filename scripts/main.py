@@ -39,6 +39,14 @@ class EncounterInfo(BaseModel):
     provider_name: str
 
 
+class MedicationDetail(BaseModel):
+    display: str
+    source: str
+    status: Optional[str] = None
+    authoredOn: Optional[str] = None
+    practioner: Optional[str] = None
+
+
 class PatientHistoryResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     patient_id: str
@@ -46,7 +54,8 @@ class PatientHistoryResponse(BaseModel):
     hapi_patient_id: str
     encounter: Optional[EncounterInfo] = None
     conditions: List[ResourceDetail] = []
-    medications: List[ResourceDetail] = []
+    active_medications: List[MedicationDetail] = []
+    historical_medications: List[MedicationDetail] = []
     allergies: List[ResourceDetail] = []
     summary: str
     missing: List[str] = []
@@ -129,15 +138,22 @@ async def get_patient_history(
             elif "coding" in code_obj and len(code_obj["coding"]) > 0:
                 display_name = code_obj["coding"][0].get("display", "Unknown")
 
-            items.append({
-                "display": display_name,
-                "source": f"{resource_type}/{res_id}"
-            })
+            item = {"display": display_name, "source": f"{resource_type}/{res_id}"}
+
+            if resource_type == "MedicationRequest":
+                item["status"] = resource.get("status", "")
+                item["authoredOn"] = resource.get("authoredOn", "")
+                item["practioner"] = resource.get("requester", {}).get("display", "")
+
+            items.append(item)
         return items
 
     conditions = parse_bundle(cond_resp.json() if cond_resp.status_code == 200 else {}, "Condition")
     medications = parse_bundle(med_resp.json() if med_resp.status_code == 200 else {}, "MedicationRequest")
     allergies = parse_bundle(alg_resp.json() if alg_resp.status_code == 200 else {}, "AllergyIntolerance")
+
+    active_medications = [m for m in medications if m.get("status") == "active"]
+    historical_medications = [m for m in medications if m.get("status") != "active"]
 
     missing_list = []
     if not conditions:
@@ -158,7 +174,8 @@ async def get_patient_history(
             "provider_name": "Dr. Jane Doe, MD"
         },
         "conditions": conditions,
-        "medications": medications,
+        "active_medications": active_medications,
+        "historical_medications": historical_medications,
         "allergies": allergies,
         "summary": f"Retrieved record for Patient '{patient_id}' (HAPI internal ID: {resolved_id}, Original UUID: {original_uuid}) at version {version_id}.",
         "missing": missing_list

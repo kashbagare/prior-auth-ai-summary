@@ -127,19 +127,17 @@ def parse_bundle(bundle: dict, resource_type: str) -> list[dict]:
     return items
 
 
-async def generate_summary(conditions: list, medications: list, allergies: list, model_section: str = "llama3.2:3b") -> tuple[str, dict]:
+async def generate_summary(conditions: list, active_meds: list, historical_meds: list, allergies: list, model_section: str = "llama3.2:3b") -> tuple[str, dict]:
     def fmt_conditions_or_allergies(items):
         return ", ".join(i["display"] for i in items) if items else "none"
 
-    def fmt_medications(items):
+    def fmt_med_list(items):
         if not items:
             return "none"
         formatted_meds = []
         for m in items:
-            details = f"{m['display']}"
+            details = m["display"]
             meta = []
-            if m.get("status"):
-                meta.append(f"Status: {m['status']}")
             if m.get("authoredOn"):
                 meta.append(f"Authored: {m['authoredOn']}")
             if m.get("practioner"):
@@ -148,6 +146,12 @@ async def generate_summary(conditions: list, medications: list, allergies: list,
                 details += f" ({', '.join(meta)})"
             formatted_meds.append(details)
         return "; ".join(formatted_meds)
+
+    def fmt_medications(active, historical):
+        return (
+            f"Active medications: {fmt_med_list(active)} | "
+            f"Historical medications (stopped, completed, on-hold): {fmt_med_list(historical)}"
+        )
 
     model_params, prompt_template = load_model_config(model_section)
 
@@ -159,7 +163,7 @@ async def generate_summary(conditions: list, medications: list, allergies: list,
 
     formatted_prompt = tmpl.substitute(
         conditions=fmt_conditions_or_allergies(conditions),
-        medications=fmt_medications(medications),
+        medications=fmt_medications(active_meds, historical_meds),
         allergies=fmt_conditions_or_allergies(allergies)
     )
 
@@ -241,8 +245,11 @@ async def fetch_patient(patient_id: str, model_section: str = "llama3.2:3b"):
     medications = parse_bundle(med_resp.json() if med_resp.status_code == 200 else {}, "MedicationRequest")
     allergies = parse_bundle(alg_resp.json() if alg_resp.status_code == 200 else {}, "AllergyIntolerance")
 
+    active_meds = [m for m in medications if m.get("status") == "active"]
+    historical_meds = [m for m in medications if m.get("status") != "active"]
+
     print(f"Generating summary via Ollama using [{model_section}]...")
-    summary, metrics = await generate_summary(conditions, medications, allergies, model_section)
+    summary, metrics = await generate_summary(conditions, active_meds, historical_meds, allergies, model_section)
 
     missing = []
     if not conditions:
@@ -255,7 +262,8 @@ async def fetch_patient(patient_id: str, model_section: str = "llama3.2:3b"):
     packet = {
         "patient_id": patient_id,
         "conditions": conditions,
-        "medications": medications,
+        "active_medications": active_meds,
+        "historical_medications": historical_meds,
         "allergies": allergies,
         "summary": summary,
         "missing": missing,

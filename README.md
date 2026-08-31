@@ -111,6 +111,8 @@ GET /fhir/Patient/{patient_id}/_history/{version_id}
 
 Resolves a patient by HAPI internal resource ID first, then falls back to a UUID identifier search. Returns structured clinical context with every item sourced to a FHIR resource.
 
+Medications are split into `active_medications` and `historical_medications` so reviewers and the LLM can immediately distinguish current treatment from past prescriptions — important for prior auth decisions like step therapy verification.
+
 **Example response:**
 
 ```json
@@ -124,8 +126,11 @@ Resolves a patient by HAPI internal resource ID first, then falls back to a UUID
     "provider_name": "Dr. Jane Doe, MD"
   },
   "conditions": [{ "display": "Diabetes", "source": "Condition/1a2b3c" }],
-  "medications": [
-    { "display": "Metformin 500 MG", "source": "MedicationRequest/3c4d5e" }
+  "active_medications": [
+    { "display": "Metformin 500 MG", "source": "MedicationRequest/3c4d5e", "status": "active", "authoredOn": "1951-10-22", "practioner": "Dr. Jane Doe" }
+  ],
+  "historical_medications": [
+    { "display": "Simvastatin 10 MG", "source": "MedicationRequest/9z8y7x", "status": "stopped", "authoredOn": "1965-09-06", "practioner": "Dr. John Smith" }
   ],
   "allergies": [
     { "display": "Penicillin", "source": "AllergyIntolerance/7f8g9h" }
