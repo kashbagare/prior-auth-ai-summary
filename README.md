@@ -182,11 +182,11 @@ Evaluated on patient `0718123b` (Floyd Jerde): 23 conditions, 10 active medicati
 | Model            | JSON | Factual grounding | Completeness | Conciseness | Clinical utility | Wall clock | Tokens/sec |
 | ---------------- | ---- | ----------------- | ------------ | ----------- | ---------------- | ---------- | ---------- |
 | `llama3.2:3b`    | Pass | Pass              | 3/3          | Pass        | 3/3              | 1.62 s     | 88.59      |
-| `gemma3:4b`      | Pass | Pass              | 2/3          | Pass        | 2/3              | 5.11 s†    | 71.02      |
+| `gemma3:4b`      | Pass | Pass              | 2/3          | Pass        | 2/3              | 2.23 s     | 71.02      |
 | `phi4-mini:3.8b` | Pass | **Fail**          | 2/3          | Pass        | 1/3              | 1.21 s     | 70.15      |
 | `qwen3:4b`       | **Fail** | n/a           | n/a          | n/a         | n/a              | n/a        | n/a        |
 
-† likely cold-start model load
+Wall-clock times are indicative — they vary run to run with machine load. Tokens/sec is the more stable comparison.
 
 **Chosen default: `llama3.2:3b`**
 
@@ -194,7 +194,7 @@ Evaluated on patient `0718123b` (Floyd Jerde): 23 conditions, 10 active medicati
 
 Named the highest-stakes conditions and connected leuprolide to prostate cancer — immediately actionable for a reviewer.
 
-**gemma3:4b** passed factual checks but stayed vague: "neoplasms and neurological events," "various cardiovascular agents." Technically correct, not usable. Also ran 3× slower.
+**gemma3:4b** passed factual checks but stayed vague: "neoplasms and neurological events," "various cardiovascular agents." Technically correct, not usable. Also somewhat slower — ~20% lower throughput.
 
 **phi4-mini:3.8b** listed simvastatin (stopped 1980) as a current medication, and double-listed furosemide and Lasix as two separate drugs. Factual grounding failure is a hard disqualifier for prior auth.
 
