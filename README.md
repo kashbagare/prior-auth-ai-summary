@@ -32,10 +32,6 @@ Data flow — end to end
                json_out/ai_summary.json         (full response payload)
                json_out/ai_summary_metrics.json (Ollama performance metrics)
                csv_out/ai_summary_metrics.csv   (appended row — builds comparison table across models)
-
-  eval.py (optional CLI — terminal-based model comparison)
-       └─► calls GET /fhir/Patient/{id}?model={model} on the running server
-           no pipeline logic of its own — artifacts written by the server
 ```
 
 Two processes must stay running:
@@ -240,7 +236,7 @@ All source fields verified by resolving resource IDs directly against HAPI FHIR.
 
 ## Technical Decisions
 
-**Eval artifacts on every request** — every browser hit, curl call, or eval.py run produces the same metrics automatically. No separate eval mode to invoke; CSV appends build a comparison table across model runs without orchestration.
+**Eval artifacts on every request** — every browser hit or curl call produces the same metrics automatically. No separate eval mode to invoke; CSV appends build a comparison table across model runs without orchestration.
 
 **Historical med grouping in the prompt** — after fixing pagination, Floyd Jerde's 1,265 historical entries doubled the prompt size (1,134 → 2,050 tokens). The model ignored conditions and fixated on one drug. Grouping collapses repeats: `Simvastatin 10 MG (×63, 1965–1980)` instead of 63 lines. Prompt dropped to 796 tokens; quality recovered.
 
@@ -295,7 +291,7 @@ Diagnosis of every issue was mine — I identified the symptom, traced the root 
 
 **Google Gemini** (~20–25 prompts) — used as a debugging partner after the foundation was in place. Key examples: I spotted the pagination gap by comparing the raw bundle count (1,275) to the API output (20); Gemini drafted `fetch_all_pages()`. I spotted the post-fix regression by comparing summaries before and after; Gemini helped implement the historical medication grouper. In both cases the diagnosis was mine; Gemini compressed the implementation time. Also helped structure and format this README.
 
-**Claude** — assisted with `fetch_all_pages()`, the `fmt_historical_meds()` grouper, and refactoring `eval.py` into a thin CLI wrapper.
+**Claude** — assisted with `fetch_all_pages()` and the `fmt_historical_meds()` grouper.
 
 ### Open source
 
