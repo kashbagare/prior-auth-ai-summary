@@ -16,33 +16,27 @@ Data flow — end to end
        ▼ dropped into
   data/input/
        │
-       ▼ polled every 5 s by
+       ▼ polled every 5 s (background task started by lifespan hook)
   load_json.py  ──► preserve_synthea_ids()  ──► POST bundle to HAPI FHIR :8080
-       │                                              │
-       │                                    data/processed/ (file moved here)
-       │
-  main.py (FastAPI :8000)
-       │  on GET /fhir/Patient/{id}/_history/{version}
-       ├─► query HAPI for Condition, MedicationRequest, AllergyIntolerance
-       └─► return structured JSON (active_medications / historical_medications split)
+                                                        │
+                                               data/processed/ (file moved here)
 
-  ai_summary.py (CLI — run separately, per patient)
-       │
-       ├─► query HAPI for same three resource types
-       ├─► split meds active vs historical
-       ├─► build prompt via llm_param.ini template
-       ├─► POST to Ollama :11434  ──► LLM generates summary
-       └─► write json_out/ai_summary.json
-               json_out/ai_summary_metrics.json
-               csv_out/ai_summary_metrics.csv
+  main.py (FastAPI :8000)
+       │  on GET /fhir/Patient/{id}?model=llama3.2:3b
+       ├─► query HAPI for Condition, MedicationRequest, AllergyIntolerance
+       ├─► split medications into active vs historical
+       ├─► call ai_summary.generate_summary()
+       │         └─► build prompt via llm_param.ini template
+       │         └─► POST to Ollama :11434  ──► LLM generates summary
+       └─► return full packet: clinical data + AI summary
 ```
 
 Two processes must stay running continuously in the background:
 
 - **Docker (HAPI FHIR)** — the FHIR data store, launched by `setup.sh`
-- **main.py** — the FastAPI server and the ETL ingestion loop, run together
+- **main.py** — the FastAPI server and the ingestion loop, run together
 
-`ai_summary.py` is a standalone CLI invoked on demand per patient.
+`ai_summary.py` is a library module imported by `main.py` — it is not run separately.
 
 ---
 
@@ -93,39 +87,43 @@ python scripts/main.py
 This starts two concurrent services:
 
 - **Ingestion loop** — polls `data/input/` every 5 seconds for new Synthea bundles, uploads them to HAPI FHIR, then moves each file to `data/processed/`
-- **REST API** — serves patient history at `GET /fhir/Patient/{patient_id}/_history/{version_id}` on port 8000
+- **REST API** — serves patient history with AI summary at `GET /fhir/Patient/{patient_id}` on port 8000
 
 Drop any `.json` Synthea bundle into `data/input/` and the log confirms upload and file move.
 
 **Keep this terminal open.**
 
-### Step 4 — Generate an AI summary (per patient)
+### Step 4 — Query a patient
 
-Open a third terminal window:
+Open a browser or run curl with a patient ID and optional model:
 
-```bash
-source venv/bin/activate
-python scripts/ai_summary.py
+```
+http://127.0.0.1:8000/fhir/Patient/{patient_id}?model={model_section}
 ```
 
-Enter a patient ID when prompted. Optionally enter a model section name (default: `llama3.2:3b`).
+For example:
 
-Output written to:
-| File | Contents |
-|------|----------|
-| `json_out/ai_summary.json` | Full patient packet with AI summary |
-| `json_out/ai_summary_metrics.json` | Token counts, latency, tokens/sec |
-| `csv_out/ai_summary_metrics.csv` | Same metrics in tabular form |
+```
+http://127.0.0.1:8000/fhir/Patient/2fa15bc7-8866-461a-9000-f739e425860a?model=llama3.2:3b
+```
+
+The response includes conditions, medications (active and historical), allergies, and an AI-generated prior-auth summary — all in one call.
 
 ---
 
 ## API Reference
 
 ```
-GET /fhir/Patient/{patient_id}/_history/{version_id}
+GET /fhir/Patient/{patient_id}?model=llama3.2:3b&_pretty=true
 ```
 
-Resolves a patient by HAPI internal resource ID first, then falls back to a UUID identifier search. Returns structured clinical context with every item sourced to a FHIR resource.
+| Parameter    | Default        | Description                                              |
+|--------------|----------------|----------------------------------------------------------|
+| `patient_id` | —              | HAPI resource ID or Synthea UUID (fallback identifier search) |
+| `model`      | `llama3.2:3b`  | Model section name from `llm_param.ini`                  |
+| `_pretty`    | `true`         | Indent JSON output for readability                       |
+
+Resolves a patient by HAPI internal resource ID first, then falls back to a UUID identifier search. Fetches conditions, medications, and allergies from HAPI, calls Ollama to generate a prior-auth summary, and returns the full packet in one response.
 
 Medications are split into `active_medications` and `historical_medications` so reviewers and the LLM can immediately distinguish current treatment from past prescriptions — important for prior auth decisions like step therapy verification.
 
@@ -134,13 +132,8 @@ Medications are split into `active_medications` and `historical_medications` so 
 ```json
 {
   "patient_id": "2fa15bc7-8866-461a-9000-f739e425860a",
+  "original_patient_id": "2fa15bc7-8866-461a-9000-f739e425860a",
   "hapi_patient_id": "2fa15bc7-8866-461a-9000-f739e425860a",
-  "encounter": {
-    "encounter_id": "Encounter/enc-2fa15bc7",
-    "type": "Ambulatory / Outpatient",
-    "facility_name": "General Hospital Clinic A",
-    "provider_name": "Dr. Jane Doe, MD"
-  },
   "conditions": [{ "display": "Diabetes", "source": "Condition/1a2b3c" }],
   "active_medications": [
     {
@@ -163,7 +156,7 @@ Medications are split into `active_medications` and `historical_medications` so 
   "allergies": [
     { "display": "Penicillin", "source": "AllergyIntolerance/7f8g9h" }
   ],
-  "summary": "Two-sentence summary a reviewer can scan.",
+  "summary": "Patient is being treated for Diabetes with active Metformin therapy. Step therapy history shows prior Simvastatin use, now stopped.",
   "missing": []
 }
 ```
@@ -185,7 +178,7 @@ Medications are split into `active_medications` and `historical_medications` so 
 
 ### `config_dir/llm_param.ini`
 
-Each `[section]` corresponds to a model identifier passed to `ai_summary.py`. Parameters in `[DEFAULT]` are inherited by all sections. Add a new model by adding a new section — no code changes required.
+Each `[section]` corresponds to a model identifier passed via the `?model=` query parameter. Parameters in `[DEFAULT]` are inherited by all sections. Add a new model by adding a new section — no code changes required.
 
 Available sections: `llama3.2:3b`, `qwen3:4b`, `gemma3:4b`, `phi4-mini:3.8b`
 
