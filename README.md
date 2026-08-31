@@ -57,7 +57,9 @@ cd prior-auth-ai-summary
 
 ### Step 2 — Pull Ollama models and start HAPI FHIR
 
-> **Prerequisite:** Docker Desktop must be installed and running before this step. Download it at [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
+> **Prerequisites:**
+> - **Ollama** must be installed and its daemon running. Download it at [https://ollama.com/download](https://ollama.com/download).
+> - **Docker Desktop** must be installed and running. Download it at [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
 
 Open a dedicated terminal window and run:
 
