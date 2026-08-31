@@ -188,12 +188,12 @@ Qwen emits `<think>…</think>` reasoning blocks and markdown fences even with `
 
 Reviewed a sample of Synthea patients after ingestion. For each: (1) does the summary reflect only what is on file? (2) does each `source` field resolve to a real FHIR resource?
 
-| Patient             | Conditions | Active Meds | Allergies | Summary accurate? | Sources valid? | Notes                                                 |
-| ------------------- | ---------- | ----------- | --------- | ----------------- | -------------- | ----------------------------------------------------- |
-| 0718123b (Floyd)    | 20         | 3 active    | 0         | Yes               | Yes            | Long Simvastatin stop/start history collapsed cleanly |
-| 1e0a8bd3 (Alesha)   | Varies     | Varies      | Varies    | Yes               | Yes            | Multi-condition patient; summary stayed within scope  |
-| 49e4037a (Carl)     | Varies     | Varies      | Varies    | Yes               | Yes            | Allergy correctly surfaced in missing when absent     |
-| 3400bda2 (Donnette) | Varies     | Varies      | Varies    | Yes               | Yes            | Medication statuses reflected accurately              |
+| Patient          | Conditions | Active Meds | Historical Meds | Allergies | Summary accurate? | Sources valid? | Notes                                                                                  |
+| ---------------- | ---------- | ----------- | --------------- | --------- | ----------------- | -------------- | -------------------------------------------------------------------------------------- |
+| 0718123b         | 20         | 3           | 17              | 0         | Yes               | Yes            | 17 stopped Simvastatin renewals correctly separated from 3 active medications          |
+| 74d801e7         | 10         | 2           | 5               | 1         | Yes               | Yes            | Multi-condition patient (chronic pain, migraine, drug overdose); summary scoped correctly; wheat allergy surfaced |
+| c088b7af         | 5          | 4           | 0               | 5         | Yes               | Yes            | Complex allergy profile (latex, mould, dust mites, dander, tree pollen) fully captured |
+| 10c09023         | 7          | 0           | 0               | 0         | Yes               | Yes            | No medications or allergies on file; correctly flagged in `missing` field              |
 
 **All source fields verified** by resolving `Condition/{id}`, `MedicationRequest/{id}`, and `AllergyIntolerance/{id}` directly against HAPI FHIR. No hallucinated conditions or medications observed across any run.
 
