@@ -9,18 +9,32 @@ Built for the Autonomize FDE technical assignment.
 ## Architecture
 
 ```
-data/input/*.json ──► load_json.py (ETL) ──► HAPI FHIR :8080 ──► data/processed/
-config.json       ──►      (polling)                │   │
-                                                    │   │ query
-HTTP Client ──► main.py FastAPI :8000 ──────────────┘   │
-                                                        │
-                    ai_summary.py ◄─────────────────────┘
-                          │  ▲
-                          │  └── llm_param.ini
-                          ▼
-                    Ollama :11434
-                          │
-                    json_out/ · csv_out/
+Data flow — end to end
+
+  Synthea .json files
+       │
+       ▼ dropped into
+  data/input/
+       │
+       ▼ polled every 5 s by
+  load_json.py  ──► preserve_synthea_ids()  ──► POST bundle to HAPI FHIR :8080
+       │                                              │
+       │                                    data/processed/ (file moved here)
+       │
+  main.py (FastAPI :8000)
+       │  on GET /fhir/Patient/{id}/_history/{version}
+       ├─► query HAPI for Condition, MedicationRequest, AllergyIntolerance
+       └─► return structured JSON (active_medications / historical_medications split)
+
+  ai_summary.py (CLI — run separately, per patient)
+       │
+       ├─► query HAPI for same three resource types
+       ├─► split meds active vs historical
+       ├─► build prompt via llm_param.ini template
+       ├─► POST to Ollama :11434  ──► LLM generates summary
+       └─► write json_out/ai_summary.json
+               json_out/ai_summary_metrics.json
+               csv_out/ai_summary_metrics.csv
 ```
 
 Two processes must stay running continuously in the background:
@@ -127,10 +141,22 @@ Medications are split into `active_medications` and `historical_medications` so 
   },
   "conditions": [{ "display": "Diabetes", "source": "Condition/1a2b3c" }],
   "active_medications": [
-    { "display": "Metformin 500 MG", "source": "MedicationRequest/3c4d5e", "status": "active", "authoredOn": "1951-10-22", "practioner": "Dr. Jane Doe" }
+    {
+      "display": "Metformin 500 MG",
+      "source": "MedicationRequest/3c4d5e",
+      "status": "active",
+      "authoredOn": "1951-10-22",
+      "practioner": "Dr. Jane Doe"
+    }
   ],
   "historical_medications": [
-    { "display": "Simvastatin 10 MG", "source": "MedicationRequest/9z8y7x", "status": "stopped", "authoredOn": "1965-09-06", "practioner": "Dr. John Smith" }
+    {
+      "display": "Simvastatin 10 MG",
+      "source": "MedicationRequest/9z8y7x",
+      "status": "stopped",
+      "authoredOn": "1965-09-06",
+      "practioner": "Dr. John Smith"
+    }
   ],
   "allergies": [
     { "display": "Penicillin", "source": "AllergyIntolerance/7f8g9h" }
@@ -188,12 +214,12 @@ Qwen emits `<think>…</think>` reasoning blocks and markdown fences even with `
 
 Reviewed a sample of Synthea patients after ingestion. For each: (1) does the summary reflect only what is on file? (2) does each `source` field resolve to a real FHIR resource?
 
-| Patient          | Conditions | Active Meds | Historical Meds | Allergies | Summary accurate? | Sources valid? | Notes                                                                                  |
-| ---------------- | ---------- | ----------- | --------------- | --------- | ----------------- | -------------- | -------------------------------------------------------------------------------------- |
-| 0718123b         | 20         | 3           | 17              | 0         | Yes               | Yes            | 17 stopped Simvastatin renewals correctly separated from 3 active medications          |
-| 74d801e7         | 10         | 2           | 5               | 1         | Yes               | Yes            | Multi-condition patient (chronic pain, migraine, drug overdose); summary scoped correctly; wheat allergy surfaced |
-| c088b7af         | 5          | 4           | 0               | 5         | Yes               | Yes            | Complex allergy profile (latex, mould, dust mites, dander, tree pollen) fully captured |
-| 10c09023         | 7          | 0           | 0               | 0         | Yes               | Yes            | No medications or allergies on file; correctly flagged in `missing` field              |
+| Patient  | Conditions | Active Meds | Historical Meds | Allergies | Summary accurate? | Sources valid? | Notes                                                                                                             |
+| -------- | ---------- | ----------- | --------------- | --------- | ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 0718123b | 20         | 3           | 17              | 0         | Yes               | Yes            | 17 stopped Simvastatin renewals correctly separated from 3 active medications                                     |
+| 74d801e7 | 10         | 2           | 5               | 1         | Yes               | Yes            | Multi-condition patient (chronic pain, migraine, drug overdose); summary scoped correctly; wheat allergy surfaced |
+| c088b7af | 5          | 4           | 0               | 5         | Yes               | Yes            | Complex allergy profile (latex, mould, dust mites, dander, tree pollen) fully captured                            |
+| 10c09023 | 7          | 0           | 0               | 0         | Yes               | Yes            | No medications or allergies on file; correctly flagged in `missing` field                                         |
 
 **All source fields verified** by resolving `Condition/{id}`, `MedicationRequest/{id}`, and `AllergyIntolerance/{id}` directly against HAPI FHIR. No hallucinated conditions or medications observed across any run.
 
