@@ -19,15 +19,18 @@ _STRING_ESCAPES = {"\n": "\\n", "\t": "\\t", "\r": "\\r"}
 
 
 def extract_json_payload(raw_response: str) -> str:
-    """Escapes raw control characters inside JSON string values so json.loads accepts them."""
+    """Escapes raw control characters inside JSON string values so json.loads accepts them.
+    literal newline       → \\n
+    literal tab           → \\t
+    literal carriage ret  → \\r
+    """
     if not raw_response:
         return ""
 
     # "format": "json" constrains Ollama's sampler to emit a bare JSON document, so there are no
     # markdown fences or prose preamble to strip. The one thing the grammar does not guarantee is
     # that a literal newline inside a string value gets escaped, which json.loads rejects.
-    # A character scanner (not a regex) because only newlines *inside* a string need escaping —
-    # escaping the structural ones between tokens (e.g. pretty-printed JSON) makes it invalid.
+    # A character scanner (not a regex) because only newlines *inside* a string need escaping 
     out = []
     in_string = False   # True while the cursor is inside a JSON string literal
     escaped = False     # True for one character after a backslash, to skip \" without closing the string
@@ -72,12 +75,6 @@ def parse_summary_from_response(raw_text: str) -> str:
     match = re.search(r'"summary"\s*:\s*"(.*?)"', raw_text, re.DOTALL)
     if match:
         return match.group(1).replace('\\n', ' ').strip()
-
-    # Tier 3: last resort — strip any markdown fences and return raw text so a completed
-    # inference is never silently discarded as "Summary unavailable."
-    clean_fallback = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", raw_text, flags=re.DOTALL).strip()
-    if clean_fallback:
-        return clean_fallback
 
     return "Summary unavailable."
 

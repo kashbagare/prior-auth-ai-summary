@@ -252,7 +252,7 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 
 **INI for model config** — `[DEFAULT]` inheritance means the shared prompt is written once; each model section overrides only what differs.
 
-**Multi-tier JSON extraction** — `format: json` constrains Ollama's sampler to emit a bare JSON document, so there are no fences or preamble to strip. The remaining risk is unescaped control characters inside string values (literal newlines), which `json.loads` rejects. A character scanner fixes these in-string only — escaping structural newlines between tokens would corrupt valid pretty-printed JSON. Regex fallbacks on the raw text catch any cases where the outer structure is still malformed.
+**Multi-tier JSON extraction** — `format: json` constrains Ollama's sampler to emit a bare JSON document, so there are no fences or preamble to strip. The remaining risk is unescaped control characters inside string values (literal newlines), which `json.loads` rejects. A character scanner fixes these in-string only — escaping structural newlines between tokens would corrupt valid pretty-printed JSON. A regex fallback on the raw text catches any remaining cases where the outer structure is still malformed.
 
 ---
 
