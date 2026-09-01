@@ -272,6 +272,22 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 
 ---
 
+## Limitations
+
+Known gaps in the current demo implementation:
+
+- **No authentication** — any request to `GET /fhir/Patient/{id}` returns the full clinical record with no identity check or access control.
+- **No prompt sanitization** — clinical data is embedded into the prompt verbatim; PHI is not de-identified and a malicious FHIR field value could inject instructions into the model's context.
+- **Ingestion and API share one process** — the polling loop and HTTP server run in the same event loop; a slow HAPI upload can starve API responses.
+- **Eval artifacts have race conditions** — `ai_summary.json` and `ai_summary_metrics.json` are overwritten on every request; concurrent requests clobber each other.
+- **No pagination guard** — `fetch_all_pages()` follows `link[next]` indefinitely with no page cap; a corrupt or circular link would hang the request.
+- **Ollama call is synchronous** — the caller waits the full inference time with no queue, retry, or fallback model.
+- **Flat file eval storage** — not queryable or auditable at scale; no request ID or timestamp index.
+- **Config re-read on every request** — acceptable for a demo, but inefficient under real load.
+- **No Docker Compose** — HAPI FHIR is launched via a bare `docker run` command with no volume mount, so all ingested data is lost when the container stops. A production setup would use Docker Compose with a named volume and a managed database backend.
+
+---
+
 ## Next Steps
 
 To move this toward production:
