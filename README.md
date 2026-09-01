@@ -185,7 +185,7 @@ Evaluated on patient `0718123b` (Floyd Jerde): 23 conditions, 10 active medicati
 | `llama3.2:3b`    | Pass | Pass              | 3/3          | Pass        | 3/3              | 3.13 s     | 89.00      |
 | `gemma3:4b`      | Pass | Pass              | 2/3          | Pass        | 2/3              | 5.14 s     | 71.10      |
 | `phi4-mini:3.8b` | Pass | Pass              | 3/3          | Pass        | 3/3              | 1.17 s     | 73.98      |
-| `qwen3:4b`       | Pass | **Fail**          | 3/3          | Pass        | 1/3              | 5.24 s     | 71.01      |
+| `qwen3:4b`       | Pass | **Fail**          | 3/3          | **Fail**    | 1/3              | 5.24 s     | 71.01      |
 
 Wall-clock times vary run to run with machine load; tokens/sec is the more stable comparison.
 
