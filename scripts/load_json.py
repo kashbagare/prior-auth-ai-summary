@@ -41,6 +41,7 @@ def preserve_synthea_ids(bundle_data):
             continue
         # Slice off the "urn:uuid:" prefix to get the bare UUID that HAPI will store as the resource ID.
         resource_id = full_url[len("urn:uuid:"):]
+        #get resource info associated with id
         resource = entry.get("resource", {})
         resource_type = resource.get("resourceType", "")
         if not resource_type:
@@ -105,7 +106,9 @@ async def run_ingestion_loop():
         poll_interval = config.get("poll_interval_seconds", 5)
         concurrency = config.get("max_concurrent_uploads", 10)
 
+        #create data/input if it doesnt exist
         os.makedirs(input_dir, exist_ok=True)
+
         files = glob.glob(os.path.join(input_dir, "*.json"))
 
         if files:

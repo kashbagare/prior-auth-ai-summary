@@ -61,7 +61,6 @@ class ResourceDetail(BaseModel):
     display: str
     source: str
 
-
 # Extends ResourceDetail with medication-specific fields; all three extras are Optional because only MedicationRequest has them.
 class MedicationDetail(BaseModel):
     display: str
@@ -70,10 +69,8 @@ class MedicationDetail(BaseModel):
     authoredOn: Optional[str] = None   # date the prescription was originally written
     practioner: Optional[str] = None   # prescribing provider name (intentional typo matches field in data)
 
-
 # Top-level response model; extra="allow" lets config-driven fields pass through without a schema change.
 class PatientHistoryResponse(BaseModel):
-    model_config = ConfigDict(extra="allow")
     patient_id: str
     conditions: List[ResourceDetail] = []
     active_medications: List[MedicationDetail] = []
@@ -83,6 +80,8 @@ class PatientHistoryResponse(BaseModel):
     missing: List[str] = []            # flags resource types that returned zero results
 
 
+# Registers GET /fhir/Patient/{patient_id} with FastAPI. 
+# The decorators tell FastAPI to validate the output against PatientHistoryResponse
 # response_model_exclude_none=True strips None fields from the output so the JSON stays clean.
 @app.get(
     "/fhir/Patient/{patient_id}",
@@ -102,37 +101,22 @@ async def get_patient_history(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            patient_resource = None
-
-            # Try the ID as a direct HAPI resource ID first; fall back to a FHIR identifier search so both ID formats work.
             patient_resp = await client.get(f"{hapi_url}/Patient/{patient_id}")
 
-            if patient_resp.status_code == 200:
-                patient_resource = patient_resp.json()
-            else:
-                # ?identifier= searches every Patient's identifier array for a matching value (covers Synthea UUIDs).
-                search_resp = await client.get(f"{hapi_url}/Patient?identifier={patient_id}")
-                search_data = search_resp.json() if search_resp.status_code == 200 else {}
-
-                if search_data.get("total", 0) > 0:
-                    patient_resource = search_data["entry"][0]["resource"]
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail={
-                            "error": "PatientNotFound",
-                            "message": f"Patient '{patient_id}' not found by Resource ID or Identifier.",
-                            "status": "Check if ingestion has completed for this file."
-                        }
-                    )
-
-            # resolved_id is HAPI's internal ID — used for all sub-queries regardless of how the patient was looked up.
-            resolved_id = patient_resource.get("id", patient_id)
+            if patient_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={
+                        "error": "PatientNotFound",
+                        "message": f"Patient '{patient_id}' not found.",
+                        "status": "Check if ingestion has completed for this file."
+                    }
+                )
 
             # Fetch all pages for each resource type; _count=1000 reduces round-trips for large histories.
-            cond_bundle = await fetch_all_pages(client, f"{hapi_url}/Condition?patient=Patient/{resolved_id}&_count=1000")
-            med_bundle = await fetch_all_pages(client, f"{hapi_url}/MedicationRequest?patient=Patient/{resolved_id}&_count=1000")
-            alg_bundle = await fetch_all_pages(client, f"{hapi_url}/AllergyIntolerance?patient=Patient/{resolved_id}&_count=1000")
+            cond_bundle = await fetch_all_pages(client, f"{hapi_url}/Condition?patient=Patient/{patient_id}&_count=1000")
+            med_bundle = await fetch_all_pages(client, f"{hapi_url}/MedicationRequest?patient=Patient/{patient_id}&_count=1000")
+            alg_bundle = await fetch_all_pages(client, f"{hapi_url}/AllergyIntolerance?patient=Patient/{patient_id}&_count=1000")
 
         except httpx.HTTPError:
             # Covers ConnectError (HAPI not running) and ReadTimeout (HAPI too slow to respond).
@@ -215,15 +199,16 @@ async def get_patient_history(
             writer.writeheader()
         writer.writerow(csv_row)
 
-    # Returning a raw Response with indent=2 bypasses FastAPI's compact serializer so the output is human-readable by default.
-    if _pretty:
-        return Response(content=json.dumps(base_response, indent=2), media_type="application/json")
+    response_obj = PatientHistoryResponse(**base_response)
 
-    return base_response
+    if _pretty:
+        return Response(content=response_obj.model_dump_json(indent=2), media_type="application/json")
+
+    return response_obj
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    # "main:app" tells uvicorn to import the app object from this module; reload=True restarts on file changes.
+    # uvicorn runs the fast api app and listens for incoming HTTP requests
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

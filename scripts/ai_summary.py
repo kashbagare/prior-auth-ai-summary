@@ -58,6 +58,7 @@ def extract_json_payload(raw_response: str) -> str:
     return "".join(out)
 
 
+#parsing summary from Ollama response
 def parse_summary_from_response(raw_text: str) -> str:
     """Multi-tiered parser ensuring all models return a string summary without failing."""
     sanitized_str = extract_json_payload(raw_text)
@@ -106,7 +107,7 @@ def load_model_config(section_name: str) -> tuple[dict, str]:
 
 
 async def generate_summary(conditions: list, active_meds: list, historical_meds: list, allergies: list, model_section: str = "llama3.2:3b") -> tuple[str, dict]:
-    # Inner helpers format the clinical data into plain strings the prompt template can embed.
+    # Inner helper functions format the clinical data into plain strings the prompt template can embed.
     def fmt_conditions_or_allergies(items):
         return ", ".join(i["display"] for i in items) if items else "none"
 
