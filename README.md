@@ -53,6 +53,7 @@ cd prior-auth-ai-summary
 ### Step 2 — Pull Ollama models and start HAPI FHIR
 
 > **Prerequisites:**
+>
 > - **Ollama** must be installed and its daemon running. Download it at [https://ollama.com/download](https://ollama.com/download).
 > - **Docker Desktop** must be installed and running. Download it at [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
 
@@ -79,7 +80,7 @@ This does three things in sequence:
 Open a second terminal window:
 
 ```bash
-python3 -m venv venv
+python3 -m venv venv   # tested on Python 3.12
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python scripts/main.py
@@ -112,11 +113,11 @@ The response includes conditions, medications (active and historical), allergies
 GET /fhir/Patient/{patient_id}?model=llama3.2:3b&_pretty=true
 ```
 
-| Parameter    | Default        | Description                                              |
-|--------------|----------------|----------------------------------------------------------|
-| `patient_id` | —              | HAPI resource ID or Synthea UUID                         |
-| `model`      | `llama3.2:3b`  | Model section name from `llm_param.ini`                  |
-| `_pretty`    | `true`         | Indent JSON output                                       |
+| Parameter    | Default       | Description                             |
+| ------------ | ------------- | --------------------------------------- |
+| `patient_id` | —             | HAPI resource ID or Synthea UUID        |
+| `model`      | `llama3.2:3b` | Model section name from `llm_param.ini` |
+| `_pretty`    | `true`        | Indent JSON output                      |
 
 Resolves the patient, fetches conditions/medications/allergies from HAPI, calls Ollama for a summary, and returns everything in one response. Medications are split into `active_medications` and `historical_medications`.
 
@@ -190,7 +191,7 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 
 **Chosen default: `llama3.2:3b`**
 
-> *"Patient has multiple chronic conditions including hypertension, diabetes, kidney disease, and osteoarthritis, and is currently taking several medications including metformin, insulin, and metoprolol, with a history of prostate cancer and Alzheimer's disease."*
+> _"Patient has multiple chronic conditions including hypertension, diabetes, kidney disease, and osteoarthritis, and is currently taking several medications including metformin, insulin, and metoprolol, with a history of prostate cancer and Alzheimer's disease."_
 
 **Why:** it's the only model that states high-stakes diagnoses directly (prostate cancer, Alzheimer's) rather than requiring the reviewer to infer them from drug names — the safer default for a PA-reviewer audience. It also ties for the top score on every rubric column.
 
@@ -206,23 +207,23 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 
 23 conditions, 10 active medications, 1,265 historical medications, 0 allergies.
 
-| Model | Factual grounding | Clinical utility | Key finding |
-|---|---|---|---|
-| `llama3.2:3b` | Pass | 3/3 | Named prostate cancer and Alzheimer's directly alongside core chronic disease burden |
-| `gemma3:4b` | Pass | 2/3 | Run-to-run variance: one run omitted prostate cancer and Alzheimer's entirely, naming "surgical interventions" instead |
-| `phi4-mini:3.8b` | Pass | 3/3 | Named all 10 active meds correctly, incl. oncology/dementia drugs (DOCEtaxel, Leuprolide, Donepezil); no hallucinations this run |
-| `qwen3:4b` | **Fail** | 1/3 | Listed simvastatin as historical only, omitting its active order; named all 23 conditions but in one unstructured run-on sentence |
+| Model            | Factual grounding | Clinical utility | Key finding                                                                                                                       |
+| ---------------- | ----------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `llama3.2:3b`    | Pass              | 3/3              | Named prostate cancer and Alzheimer's directly alongside core chronic disease burden                                              |
+| `gemma3:4b`      | Pass              | 2/3              | Run-to-run variance: one run omitted prostate cancer and Alzheimer's entirely, naming "surgical interventions" instead            |
+| `phi4-mini:3.8b` | Pass              | 3/3              | Named all 10 active meds correctly, incl. oncology/dementia drugs (DOCEtaxel, Leuprolide, Donepezil); no hallucinations this run  |
+| `qwen3:4b`       | **Fail**          | 1/3              | Listed simvastatin as historical only, omitting its active order; named all 23 conditions but in one unstructured run-on sentence |
 
 ### Patient 2 — Alesha Marks (allergy-dominant)
 
 5 conditions, 4 active medications, 0 historical, 5 allergies (latex, mould, dust mites, dander, tree pollen).
 
-| Model | Factual grounding | Clinical utility | Key finding |
-|---|---|---|---|
-| `llama3.2:3b` | Pass | 2/3 | Named all 4 medications and all 5 allergies by name; omitted viral sinusitis as a separate condition |
-| `gemma3:4b` | Pass | 2/3 | Correctly tied hydrochlorothiazide to hypertension; grouped the other 3 drugs by class (corticosteroid/bronchodilator/antihistamine) without naming them |
-| `phi4-mini:3.8b` | Pass | 2/3 | Named all 4 medications correctly; no indication mapping |
-| `qwen3:4b` | Pass | 2/3 | Named all 4 medications correctly; no indication mapping; omitted the allergy list entirely |
+| Model            | Factual grounding | Clinical utility | Key finding                                                                                                                                              |
+| ---------------- | ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llama3.2:3b`    | Pass              | 2/3              | Named all 4 medications and all 5 allergies by name; omitted viral sinusitis as a separate condition                                                     |
+| `gemma3:4b`      | Pass              | 2/3              | Correctly tied hydrochlorothiazide to hypertension; grouped the other 3 drugs by class (corticosteroid/bronchodilator/antihistamine) without naming them |
+| `phi4-mini:3.8b` | Pass              | 2/3              | Named all 4 medications correctly; no indication mapping                                                                                                 |
+| `qwen3:4b`       | Pass              | 2/3              | Named all 4 medications correctly; no indication mapping; omitted the allergy list entirely                                                              |
 
 ### Key takeaway
 
@@ -258,16 +259,16 @@ Wall-clock times vary run to run with machine load; tokens/sec is the more stabl
 
 ## Issues Encountered
 
-| Symptom | Root cause | Fix |
-| --- | --- | --- |
-| Patient UUID became an integer after upload | HAPI assigns sequential IDs on `POST` | Rewrote bundle entries to `PUT {ResourceType}/{uuid}` |
-| UUID lookup worked, integer ID didn't (and vice versa) | Only one lookup path existed | Primary lookup by resource ID, fallback by `?identifier=` |
-| Ingestion loop stopped on one bad file | Unhandled exception escaped the per-file coroutine | Per-file `try/except` |
-| Empty summaries from `qwen3:4b` | Ollama routes reasoning-model output to a `thinking` field, not `response`; code only read `response` | Read `thinking` as fallback when `response` is empty |
-| `JSONDecodeError` on some models | Literal newlines inside JSON string values — `json.loads` rejects unescaped control characters | Character scanner escapes control chars inside strings only; regex fallback catches remaining malformed output |
-| Medication status and prescriber missing from summaries | `parse_bundle()` discarded those fields | `fmt_medications()` renders all three fields into the prompt |
-| 1,275 medications but model only saw 20 | HAPI's default page size is 20; no error is returned | `fetch_all_pages()` with `_count=1000` and `link[relation=next]` traversal |
-| Model quality regressed after pagination fix | 1,265 historical entries doubled prompt size; model fixated on one mid-list drug | Group historical meds by drug name before building the prompt |
+| Symptom                                                 | Root cause                                                                                            | Fix                                                                                                            |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Patient UUID became an integer after upload             | HAPI assigns sequential IDs on `POST`                                                                 | Rewrote bundle entries to `PUT {ResourceType}/{uuid}`                                                          |
+| UUID lookup worked, integer ID didn't (and vice versa)  | Only one lookup path existed                                                                          | Primary lookup by resource ID, fallback by `?identifier=`                                                      |
+| Ingestion loop stopped on one bad file                  | Unhandled exception escaped the per-file coroutine                                                    | Per-file `try/except`                                                                                          |
+| Empty summaries from `qwen3:4b`                         | Ollama routes reasoning-model output to a `thinking` field, not `response`; code only read `response` | Read `thinking` as fallback when `response` is empty                                                           |
+| `JSONDecodeError` on some models                        | Literal newlines inside JSON string values — `json.loads` rejects unescaped control characters        | Character scanner escapes control chars inside strings only; regex fallback catches remaining malformed output |
+| Medication status and prescriber missing from summaries | `parse_bundle()` discarded those fields                                                               | `fmt_medications()` renders all three fields into the prompt                                                   |
+| 1,275 medications but model only saw 20                 | HAPI's default page size is 20; no error is returned                                                  | `fetch_all_pages()` with `_count=1000` and `link[relation=next]` traversal                                     |
+| Model quality regressed after pagination fix            | 1,265 historical entries doubled prompt size; model fixated on one mid-list drug                      | Group historical meds by drug name before building the prompt                                                  |
 
 ---
 
