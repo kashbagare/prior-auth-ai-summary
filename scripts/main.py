@@ -54,7 +54,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
 # Pydantic models define the shape of the API response — FastAPI uses them to validate and serialize the output.
 
 # Minimal shape for conditions and allergies: the display name and the FHIR resource reference (e.g. Condition/abc123).

@@ -34,8 +34,6 @@ def preserve_synthea_ids(bundle_data):
     """By default, HAPI ignores Synthea's IDs and assigns its own sequential ones (Patient/1, Patient/2...).
     This function rewrites each bundle entry to use PUT instead of POST, and explicitly sets the resource ID
     to the Synthea UUID — forcing HAPI to store the resource under that UUID.
-    This matters because the API response includes a source field (e.g. Condition/7978d71c-...) that links
-    back to the original record; if HAPI replaced the UUID with its own ID, that link would be wrong.
     """
     for entry in bundle_data.get("entry", []):
         full_url = entry.get("fullUrl", "")
