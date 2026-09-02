@@ -1,4 +1,0 @@
-patient_id,model_section,ollama_model,wall_clock_time_seconds,ollama_total_duration_ms,ollama_eval_duration_ms,prompt_tokens,completion_tokens,total_tokens,tokens_per_second
-c088b7af-fc41-43cc-ab80-4a9ab8d47cd9,llama3.2:3b,llama3.2:3b,0.848,840.3,797.12,375,76,451,95.34
-74d801e7-3ab7-4fae-ba82-a33a89340f32,llama3.2:3b,llama3.2:3b,1.167,1158.23,728.66,422,70,492,96.07
-74d801e7-3ab7-4fae-ba82-a33a89340f32,llama3.2:3b,llama3.2:3b,0.796,788.25,745.22,422,70,492,93.93
