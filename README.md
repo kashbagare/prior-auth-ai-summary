@@ -75,6 +75,8 @@ This does three things in sequence:
 
 > To run HAPI FHIR in the background instead: `docker run -d -p 8080:8080 hapiproject/hapi:latest`
 
+> **Note:** Docker Desktop does not need to stay open once the container is running. The Docker daemon runs as a background service independently of the Desktop app — as long as you haven't explicitly stopped the container (`docker stop`), HAPI stays alive across Docker Desktop restarts.
+
 ### Step 3 — Start FastAPI + ETL pipeline
 
 Open a second terminal window:
