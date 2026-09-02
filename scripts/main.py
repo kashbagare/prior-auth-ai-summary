@@ -125,7 +125,7 @@ async def get_patient_history(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Unable to connect to local HAPI FHIR server."
             )
-
+    #takes raw data and extracts only what app actually needs
     def parse_bundle(bundle_json, resource_type):
         items = []
         if not bundle_json or "entry" not in bundle_json:

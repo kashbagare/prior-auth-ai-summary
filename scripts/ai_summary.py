@@ -56,6 +56,7 @@ def extract_json_payload(raw_response: str) -> str:
             in_string = True
         out.append(ch)
 
+    #returns same JSON string that is passed in but escaped version
     return "".join(out)
 
 
