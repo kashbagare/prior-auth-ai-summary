@@ -46,7 +46,7 @@ Two processes must stay running:
 ### Step 1 — Clone the repo
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/kashbagare/prior-auth-ai-summary.git
 cd prior-auth-ai-summary
 ```
 
