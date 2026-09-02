@@ -105,6 +105,10 @@ Open a browser or run curl with a patient ID and optional model:
 http://127.0.0.1:8000/fhir/Patient/{patient_id}?model=llama3.2:3b
 ```
 
+```bash
+curl "http://127.0.0.1:8000/fhir/Patient/{patient_id}?model=llama3.2:3b"
+```
+
 The response includes conditions, medications (active and historical), allergies, and an AI-generated prior-auth summary — all in one call.
 
 ---
