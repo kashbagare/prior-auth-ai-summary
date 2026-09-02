@@ -18,6 +18,7 @@ CONFIG_FILE = str(_PROJECT_ROOT / "config_dir" / "llm_param.ini")
 _STRING_ESCAPES = {"\n": "\\n", "\t": "\\t", "\r": "\\r"}
 
 
+#Ollama returns model output as raw string
 def extract_json_payload(raw_response: str) -> str:
     """Escapes raw control characters inside JSON string values so json.loads accepts them.
     literal newline       → \\n
@@ -107,7 +108,8 @@ def load_model_config(section_name: str) -> tuple[dict, str]:
 
 
 async def generate_summary(conditions: list, active_meds: list, historical_meds: list, allergies: list, model_section: str = "llama3.2:3b") -> tuple[str, dict]:
-    # Inner helper functions format the clinical data into plain strings the prompt template can embed.
+    # Inner helper functions format the clinical data into plain strings 
+    # LLM needs text prompt embedded
     def fmt_conditions_or_allergies(items):
         return ", ".join(i["display"] for i in items) if items else "none"
 

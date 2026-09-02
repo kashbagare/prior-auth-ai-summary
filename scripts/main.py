@@ -101,6 +101,7 @@ async def get_patient_history(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
+            #checking to see if patient actually exists
             patient_resp = await client.get(f"{hapi_url}/Patient/{patient_id}")
 
             if patient_resp.status_code != 200:
@@ -138,7 +139,7 @@ async def get_patient_history(
             code_obj = resource.get("code") or resource.get("medicationCodeableConcept") or {}
             if "text" in code_obj:
                 display_name = code_obj["text"]
-            elif "coding" in code_obj and len(code_obj["coding"]) > 0:
+            elif code_obj.get("coding"):
                 display_name = code_obj["coding"][0].get("display", "Unknown")
 
             item = {"display": display_name, "source": f"{resource_type}/{res_id}"}
